@@ -2,7 +2,7 @@
 
 The bare `{platform}:{id}:{part}` key is correct only for stages depending solely on the video
 (audio, subtitle-probe). Param-dependent stages append a short hash of their determining params so
-that changing one flag (e.g. --scene-threshold) never invalidates the whole video's cache.
+that changing one flag (e.g. --dedup-threshold) never invalidates the whole video's cache.
 """
 
 from __future__ import annotations

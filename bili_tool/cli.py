@@ -13,11 +13,11 @@ import sys
 from .cache import fs_key, load_json, save_json
 from .config import Settings
 from .merge import build_bundle, write_bundle
-from .parts import count_parts, run_parts, select_parts
+from .parts import count_parts, part_url, run_parts, select_parts
 from .quality import describe_failure, evaluate
 from .resolve import Canonical, resolve
 from .schema import Frame, Segment, Transcript
-from .subtitles import extract_info, probe
+from .subtitles import extract_info, fetch_subtitle_segments, probe
 from .transcribe import WHISPER_MODEL, download_audio, transcribe
 
 
@@ -29,17 +29,41 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--force-whisper", action="store_true", help="skip subtitle, always Whisper")
     p.add_argument("--robust", action="store_true", help="disable condition_on_previous_text")
     p.add_argument("--no-vision", action="store_true", help="skip frame captioning")
-    p.add_argument("--scene-threshold", type=float, default=None)
+    p.add_argument(
+        "--dedup-threshold", type=int, default=None,
+        help="phash hamming distance to collapse near-duplicate frames (default: 10)",
+    )
+    p.add_argument(
+        "--scene-threshold", type=float, default=None,
+        help="DEPRECATED, ignored (D13 replaced scene-cut detection); use --dedup-threshold",
+    )
     p.add_argument("--out", default=None, help="output root (default: ./out)")
     p.add_argument("--no-frame-images", action="store_true", help="omit PNGs from out/ (D8)")
     return p.parse_args(argv)
+
+
+def apply_overrides(settings: Settings, args) -> list[str]:
+    """Apply CLI levers onto Settings; return human-readable warnings for the caller to print."""
+    warnings: list[str] = []
+    if args.out:
+        from pathlib import Path
+
+        settings.out_dir = Path(args.out)
+    if args.dedup_threshold is not None:
+        settings.phash_dedup_threshold = args.dedup_threshold
+    if getattr(args, "scene_threshold", None) is not None:
+        warnings.append(
+            "--scene-threshold is deprecated and ignored (D13 replaced scene-cut detection "
+            "with periodic-sample + phash dedup); use --dedup-threshold instead."
+        )
+    return warnings
 
 
 def decide_transcript(info: dict, canonical: Canonical, settings: Settings, args) -> Transcript:
     if args.force_whisper:
         return _whisper(canonical, settings, args, reason="forced via --force-whisper")
 
-    sub = probe(info, canonical, settings)
+    sub = probe(info, canonical, settings, part1_segments=_part1_segments(canonical, settings))
     if not sub.found:
         return _whisper(
             canonical, settings, args, reason=f"no usable subtitle ({sub.reason})"
@@ -56,6 +80,20 @@ def decide_transcript(info: dict, canonical: Canonical, settings: Settings, args
         )
     reason = f"subtitle rejected ({describe_failure(gate, settings.quality)})"
     return _whisper(canonical, settings, args, reason=reason, gate=gate)
+
+
+def _part1_segments(canonical: Canonical, settings: Settings) -> list[Segment] | None:
+    """D4 tier-2 input: part 1's subtitle for the #6357 identity check. Only fetched for part>1
+    (an extra no-media probe). Best-effort — a failure here just skips tier-2, never aborts."""
+    if canonical.part <= 1:
+        return None
+    try:
+        p1_url = part_url(canonical.url, 1)
+        p1 = Canonical(canonical.platform, canonical.id, 1, p1_url)
+        p1_info = extract_info(p1_url, settings)
+        return fetch_subtitle_segments(p1_info, p1, settings)
+    except Exception:  # noqa: BLE001 - tier-2 is an optional guard, never fatal
+        return None
 
 
 def _whisper(canonical, settings, args, *, reason, gate=None) -> Transcript:
@@ -110,7 +148,9 @@ def process_part(canonical: Canonical, settings: Settings, args) -> None:
     bundle = build_bundle(
         canonical, info, transcript, frames, settings, vision_model=vision_model
     )
-    out = write_bundle(bundle, settings, frame_sources=frame_sources)
+    out = write_bundle(
+        bundle, settings, frame_sources=frame_sources, frame_images=not args.no_frame_images
+    )
     n = len(transcript.segments)
     print(
         f"[{canonical.id} p{canonical.part}] {transcript.source}: "
@@ -149,12 +189,8 @@ def main(argv=None) -> int:
 
     args = parse_args(argv)
     settings = Settings.load()
-    if args.out:
-        from pathlib import Path
-
-        settings.out_dir = Path(args.out)
-    if args.scene_threshold is not None:
-        settings.scene_threshold = args.scene_threshold
+    for w in apply_overrides(settings, args):
+        print(f"[warn] {w}")
 
     canonical = resolve(args.url)
 

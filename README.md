@@ -46,7 +46,7 @@ commit it.
 
 ```bash
 bili-tool <url> [--part N] [--all-parts] [--force-whisper] [--robust] [--no-vision]
-                [--scene-threshold F] [--out DIR] [--no-frame-images]
+                [--dedup-threshold N] [--out DIR] [--no-frame-images]
 ```
 
 Defaults: auto part detection, quality-gated subtitle→Whisper decision, vision on.
@@ -57,7 +57,12 @@ Defaults: auto part detection, quality-gated subtitle→Whisper decision, vision
 | `--force-whisper` | skip the subtitle, always transcribe with Whisper |
 | `--robust` | disable `condition_on_previous_text` (repetition-loop lectures) |
 | `--no-vision` | skip frame captioning |
+| `--dedup-threshold N` | phash hamming distance to collapse near-duplicate frames (default 10) |
 | `--no-frame-images` | omit PNGs from `out/` (caption text still recorded, D8) |
+
+`--scene-threshold` is **deprecated and ignored** (D13 replaced scene-cut detection with
+periodic sampling + phash dedup); it warns and no-ops. Use `--dedup-threshold` to tune frame
+granularity.
 
 ## Output
 
@@ -77,10 +82,23 @@ slide-chunked markdown), 32 tests green.
 
 - ✅ `--all-parts` (D12): per-part `?p=N` enumeration + failure isolation (validated on a real
   3-part video, 3/3 parts ok)
+- ✅ `--dedup-threshold` + `--no-frame-images` (D8) levers wired; `--scene-threshold` retired
+- ✅ D4 two-tier subtitle assertion: tier-1 duration sanity + tier-2 #6357 part-match (identical
+  to part 1 → reject); validated on real content (correctly rejects an incomplete AI sub)
+- ✅ Direct bilibili player-API subtitle fetch (cookie-authenticated, no WBI) — see note below
 
-**Known gaps (next):** the `--no-frame-images`/`--scene-threshold` levers are parsed but not yet
-wired; the subtitle-accept + #6357 part-match path (D4) is built but untested on real
-subtitle-bearing content (none of the test videos carry subtitles). `bilibili.tv` is unvalidated.
+**Known gaps (next):** the subtitle-**accept** branch + the D5 quality-gate thresholds are still
+unexercised on real content — every bilibili AI sub we've hit is lazily generated and only
+partially covers the video at fetch time, so D4 tier-1 rejects it before the quality gate runs.
+The fetch/parse/reject machinery is validated; the accept path stays unit-tested only until a
+fully-captioned video turns up. `bilibili.tv` is unvalidated (deferred).
+
+**Subtitle backend:** yt-dlp (even latest, 2026.06.09) does **not** surface bilibili's AI
+subtitle tracks, but the plain `x/player/v2` endpoint returns them with the same browser cookies
+yt-dlp reads — **no WBI signing needed**. `player_api.py` is that cookie-authenticated fallback
+(used whenever yt-dlp's subtitle list is empty), parsing the `bcc`/json cue body. AI subtitles
+carry `ai_type` (0 = original-language transcription, 1 = translation); only the original zh is
+used. Note these subs are generated on demand and may be incomplete on a given fetch.
 
 **Transcription backend:** uses local **faster-whisper** (HF `Systran/faster-whisper-large-v3`,
 CUDA). Routing Whisper through LM Studio (to unify with the vision endpoint) is **blocked** — as of

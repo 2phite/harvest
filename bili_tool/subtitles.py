@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 
 import yt_dlp
 
@@ -141,16 +142,84 @@ def parse_srt(text: str) -> list[Segment]:
     return out
 
 
-def probe(info: dict, canonical: Canonical, settings: Settings) -> SubtitleResult:
-    """Probe + D4 tier-1 duration sanity gate. (D4 tier-2 part-1 identity check for part>1 is
-    wired in once we have a multi-part test URL; single-part/part=1 can't hit #6357.)"""
+def _segments_text(segments: list[Segment]) -> str:
+    """Normalized concatenation of cue text — the comparison surface for the #6357 check."""
+    return "".join(s.text.strip() for s in segments)
+
+
+def is_part1_duplicate(
+    part_segments: list[Segment],
+    part1_segments: list[Segment],
+    *,
+    threshold: float = 0.90,
+) -> bool:
+    """D4 tier-2: is this part's subtitle the #6357 signature (part 1's text returned again)?
+
+    Compares the concatenated cue text. Exact match or near-identical (>= threshold similarity)
+    counts — yt-dlp's #6357 hands back part 1 verbatim, so trivial encoding drift still trips it.
+    Genuinely-distinct parts of a course share little text and score near zero, so the margin is
+    wide; the threshold only has to clear punctuation/whitespace drift, not real content overlap.
+    """
+    a = _segments_text(part_segments)
+    b = _segments_text(part1_segments)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return SequenceMatcher(None, a, b).ratio() >= threshold
+
+
+def _segments_from_track(formats: list, settings: Settings) -> list[Segment]:
+    raw, ext = _download_track(formats, settings)
+    return parse_bcc(raw) if ext == "json" else parse_srt(raw)
+
+
+def _acquire(
+    info: dict, canonical: Canonical, settings: Settings, _fetch
+) -> tuple[str, str, list[Segment]] | None:
+    """Get (source, lang, segments) for the best original-zh track. yt-dlp's list first; if it's
+    empty (always, for bilibili AI subs — see player_api), fall back to the direct player API."""
     pick = _pick_track(info)
-    if pick is None:
+    if pick is not None:
+        source, lang, formats = pick
+        return source, lang, _fetch(formats, settings)
+    from .player_api import part_segments  # deferred: avoids an import cycle
+
+    got = part_segments(canonical, settings)
+    if got is None:
+        return None
+    lang, segments = got
+    return "ai-zh", lang, segments
+
+
+def fetch_subtitle_segments(
+    info: dict, canonical: Canonical, settings: Settings
+) -> list[Segment] | None:
+    """Best original-zh segments for an already-extracted part (no media), via yt-dlp then the
+    player-API fallback. Used to pull *part 1's* subtitle for the D4 tier-2 identity check.
+    Returns None when no usable zh track exists — i.e. nothing to compare against."""
+    acq = _acquire(info, canonical, settings, _segments_from_track)
+    if acq is None:
+        return None
+    return acq[2] or None
+
+
+def probe(
+    info: dict,
+    canonical: Canonical,
+    settings: Settings,
+    *,
+    part1_segments: list[Segment] | None = None,
+    _fetch=_segments_from_track,
+) -> SubtitleResult:
+    """Probe + D4 two-tier assertion. Tier-1: duration sanity (all parts). Tier-2: for part>1,
+    reject if the text is identical to part 1 (the #6357 signature) — caller supplies
+    `part1_segments`. single-part / part=1 can't hit #6357, so tier-2 is skipped there."""
+    acq = _acquire(info, canonical, settings, _fetch)
+    if acq is None:
         return SubtitleResult(False, None, None, reason="no original-language subtitle available")
 
-    source, lang, formats = pick
-    raw, ext = _download_track(formats, settings)
-    segments = parse_bcc(raw) if ext == "json" else parse_srt(raw)
+    source, lang, segments = acq
     if not segments:
         return SubtitleResult(
             False, None, None, reason=f"subtitle track {lang!r} parsed to zero cues"
@@ -172,6 +241,16 @@ def probe(info: dict, canonical: Canonical, settings: Settings) -> SubtitleResul
                 ),
                 last_cue_end=last_end,
             )
+
+    if canonical.part > 1 and part1_segments and is_part1_duplicate(segments, part1_segments):
+        return SubtitleResult(  # D4 tier-2
+            False,
+            None,
+            None,
+            segments=[],
+            reason="subtitle rejected: failed part-match assertion (#6357, identical to part 1)",
+            last_cue_end=last_end,
+        )
 
     return SubtitleResult(
         True, source, lang, segments=segments, reason=f"{source} ({lang})", last_cue_end=last_end

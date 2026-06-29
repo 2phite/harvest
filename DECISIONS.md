@@ -212,6 +212,16 @@ implements.
   **reasoning model** → captioning needs generous `max_tokens`. Projector verified via the D7 probe.
 - **Downloads:** `aria2c` (multi-connection, IPv4-forced) is preferred for bilibili's throttled CDN;
   native ranged-chunk fallback otherwise.
+- **Subtitle source (D4, settled 2026-06-29):** yt-dlp — even the latest (`2026.06.09`) — does **not**
+  surface bilibili's AI subtitle tracks. The plain `x/player/v2` endpoint returns them with the same
+  browser cookies yt-dlp already reads, with **no WBI signing** (so the §3 surface we avoid stays
+  avoided). `player_api.py` is a cookie-authenticated fallback used whenever yt-dlp's subtitle list is
+  empty. AI subs carry `ai_type` (0 = original transcription, 1 = translation); only original zh is
+  used. **Caveat:** these subs are generated on demand and were *incomplete* on every fetch of the
+  test video (coverage 0.12–0.37), so D4 tier-1 (duration sanity) correctly rejected them → Whisper.
+  D4 tier-2 (#6357 part-1 identity check) is now wired (`is_part1_duplicate`, similarity ≥ 0.90 on
+  concatenated cue text). The subtitle-**accept** branch + D5 thresholds remain unexercised on real
+  content (no fully-captioned test video yet).
 
 ## Deferred to build-time — RESOLVED above (kept for traceability)
 - ~~faster-whisper version~~ → `1.2.1`.

@@ -1,9 +1,60 @@
-from bili_tool.merge import chunk
-from bili_tool.schema import Frame, Segment
+import json
+
+from bili_tool.config import Settings
+from bili_tool.merge import chunk, write_bundle
+from bili_tool.schema import Bundle, Frame, Meta, Segment, Transcript
 
 
 def _seg(start, end, text="x"):
     return Segment(start=start, end=end, text=text)
+
+
+def _bundle_with_frame(rel_path):
+    return Bundle(
+        platform="bilibili.com",
+        id="BV1",
+        part=1,
+        url="https://b/video/BV1",
+        fetched_at="2026-06-29T00:00:00Z",
+        transcript=Transcript(source="whisper", source_reason="test", segments=[_seg(0, 5)]),
+        frames=[Frame(ts=2.0, path=rel_path, phash="abc", ocr="SLIDE TEXT", caption="a chart")],
+        meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
+    )
+
+
+def test_no_frame_images_omits_png_nulls_path_keeps_caption(tmp_path):
+    src = tmp_path / "src.png"
+    src.write_bytes(b"\x89PNG fake")
+    bundle = _bundle_with_frame("frames/00002000.png")
+    settings = Settings()
+    settings.out_dir = tmp_path / "out"
+
+    out = write_bundle(
+        bundle, settings,
+        frame_sources={"frames/00002000.png": src},
+        frame_images=False,
+    )
+
+    assert not (out / "frames").exists()  # D8: no PNGs shipped
+    data = json.loads((out / "bundle.json").read_text(encoding="utf-8"))
+    assert data["frames"][0]["path"] is None  # path nulled
+    assert data["frames"][0]["phash"] == "abc"  # but record retained
+    md = (out / "bundle.md").read_text(encoding="utf-8")
+    assert "SLIDE TEXT" in md and "a chart" in md  # caption text still in the product
+
+
+def test_default_ships_png_and_keeps_path(tmp_path):
+    src = tmp_path / "src.png"
+    src.write_bytes(b"\x89PNG fake")
+    bundle = _bundle_with_frame("frames/00002000.png")
+    settings = Settings()
+    settings.out_dir = tmp_path / "out"
+
+    out = write_bundle(bundle, settings, frame_sources={"frames/00002000.png": src})
+
+    assert (out / "frames" / "00002000.png").exists()
+    data = json.loads((out / "bundle.json").read_text(encoding="utf-8"))
+    assert data["frames"][0]["path"] == "frames/00002000.png"
 
 
 def test_wallclock_chunking_buckets_by_window():

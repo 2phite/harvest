@@ -132,21 +132,36 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
 
 
 def write_bundle(
-    bundle: Bundle, settings: Settings, *, frame_sources: dict[str, Path] | None = None
+    bundle: Bundle,
+    settings: Settings,
+    *,
+    frame_sources: dict[str, Path] | None = None,
+    frame_images: bool = True,
 ) -> Path:
-    """Write the self-contained delivery dir out/<id>-p<part>/ (D8)."""
+    """Write the self-contained delivery dir out/<id>-p<part>/ (D8).
+
+    frame_images=False (--no-frame-images, D8): omit PNGs from out/ and null each frame's `path`
+    in bundle.json — the record keeps phash/ts/caption/ocr and the markdown keeps the caption
+    text, so only the QA images are dropped.
+    """
     out = settings.out_dir / f"{bundle.id}-p{bundle.part}"
+    out.mkdir(parents=True, exist_ok=True)
     frames_dir = out / "frames"
     # Rebuild frames/ from scratch so the delivered dir matches bundle.json exactly (D8) and
-    # stale PNGs from prior runs (e.g. a different dedup threshold) never linger.
+    # stale PNGs from prior runs (e.g. a different dedup threshold, or a prior images-on run)
+    # never linger.
     if frames_dir.exists():
         shutil.rmtree(frames_dir)
-    frames_dir.mkdir(parents=True, exist_ok=True)
 
-    if frame_sources:
+    if frame_images:
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        if frame_sources:
+            for fr in bundle.frames:
+                if fr.path and fr.path in frame_sources:
+                    shutil.copy2(frame_sources[fr.path], out / fr.path)
+    else:
         for fr in bundle.frames:
-            if fr.path and fr.path in frame_sources:
-                shutil.copy2(frame_sources[fr.path], out / fr.path)
+            fr.path = None
 
     (out / "bundle.json").write_text(
         bundle.model_dump_json(indent=2), encoding="utf-8"
