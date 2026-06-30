@@ -36,7 +36,7 @@ class ViewPage(BaseModel):
     """One entry of a (possibly multi-part) video, from `data.pages[]` (or synthesized)."""
 
     part: int
-    cid: int
+    cid: int | None = None
     title: str | None = None
     duration: int | None = None
 
@@ -44,8 +44,8 @@ class ViewPage(BaseModel):
 class ViewData(BaseModel):
     """Parsed `web-interface/view` response: the single source of truth for video metadata."""
 
-    aid: int
-    cid: int
+    aid: int | None = None
+    cid: int | None = None
     title: str | None = None
     desc: str | None = None
     duration: int | None = None
@@ -54,31 +54,18 @@ class ViewData(BaseModel):
     pages: list[ViewPage] = []
 
 
-def cid_for_part(view_data: ViewData | dict, part: int) -> int | None:
+def cid_for_part(view_data: ViewData, part: int) -> int | None:
     """Map a 1-based part to its cid from `ViewData.pages` (page-number match first, then
     positional index), falling back to the top-level cid for a single-part video.
-
-    Accepts either a `ViewData` or the raw `data` dict (legacy callers/tests).
     """
-    if isinstance(view_data, ViewData):
-        pages = view_data.pages
-        for pg in pages:
-            if pg.part == part:
-                return pg.cid
-        if 1 <= part <= len(pages):
-            return pages[part - 1].cid
-        if part == 1:
-            return view_data.cid
-        return None
-
-    pages = view_data.get("pages") or []
+    pages = view_data.pages
     for pg in pages:
-        if pg.get("page") == part:
-            return pg.get("cid")
+        if pg.part == part:
+            return pg.cid
     if 1 <= part <= len(pages):
-        return pages[part - 1].get("cid")
+        return pages[part - 1].cid
     if part == 1:
-        return view_data.get("cid")
+        return view_data.cid
     return None
 
 

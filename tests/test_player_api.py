@@ -15,24 +15,24 @@ from bili_tool.resolve import Canonical
 
 
 def test_cid_for_part_matches_page_number():
-    view = {"aid": 1, "cid": 100, "pages": [
-        {"page": 1, "cid": 100}, {"page": 2, "cid": 200}, {"page": 3, "cid": 300}]}
+    view = ViewData(aid=1, cid=100, pages=[
+        ViewPage(part=1, cid=100), ViewPage(part=2, cid=200), ViewPage(part=3, cid=300)])
     assert cid_for_part(view, 2) == 200
 
 
 def test_cid_for_part_falls_back_to_index_when_no_page_field():
-    # If entries lack a `page` field, positional index is the backstop.
-    view = {"aid": 1, "pages": [{"cid": 100}, {"cid": 200}]}
+    # If entries lack a meaningful `part` field, positional index is the backstop.
+    view = ViewData(aid=1, pages=[ViewPage(part=0, cid=100), ViewPage(part=0, cid=200)])
     assert cid_for_part(view, 2) == 200
 
 
 def test_cid_for_part_single_page_uses_top_level_cid():
-    view = {"aid": 1, "cid": 555, "pages": []}
+    view = ViewData(aid=1, cid=555, pages=[])
     assert cid_for_part(view, 1) == 555
 
 
 def test_cid_for_part_out_of_range_is_none():
-    view = {"aid": 1, "pages": [{"page": 1, "cid": 100}]}
+    view = ViewData(aid=1, pages=[ViewPage(part=1, cid=100)])
     assert cid_for_part(view, 9) is None
 
 
@@ -203,6 +203,30 @@ def test_cid_for_part_via_view_data_page_number_match():
         ],
     )
     assert cid_for_part(view, 2) == 200
+
+
+def test_part_segments_returns_none_when_view_missing_aid_and_cid():
+    """Malformed view response (missing aid, and a page with cid absent) must degrade to
+    None, matching the pre-refactor behavior, not raise a pydantic ValidationError."""
+    from bili_tool.player_api import part_segments
+
+    canonical = _canonical(part=1)
+    view_payload = {
+        "code": 0,
+        "data": {
+            # aid intentionally absent
+            "title": "Malformed",
+            "desc": "d",
+            "duration": 600,
+            "owner": {"mid": 7, "name": "Uploader"},
+            "pages": [
+                {"page": 1, "cid": None, "part": "Part One", "duration": 300},
+            ],
+        },
+    }
+    opener = _FakeOpener({_view_url(canonical): view_payload})
+    result = part_segments(canonical, Settings(), opener=opener)
+    assert result is None
 
 
 def test_part_segments_fetches_view_exactly_once():
