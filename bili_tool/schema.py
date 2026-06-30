@@ -64,6 +64,22 @@ class Meta(BaseModel):
     tool_version: str
 
 
+class ProbeResult(BaseModel):
+    """Cheap pre-flight metadata (no transcript/frames): lets Atlas estimate workload before
+    committing to the full pipeline."""
+
+    schema_version: str = SCHEMA_VERSION
+    platform: Platform
+    id: str
+    title: str | None = None
+    uploader: str | None = None
+    uploader_mid: int | None = None
+    description: str | None = None
+    duration_s: int | None = None
+    parts: int
+    part_durations_s: list[int | None] = Field(default_factory=list)
+
+
 class Bundle(BaseModel):
     schema_version: str = SCHEMA_VERSION
     platform: Platform
