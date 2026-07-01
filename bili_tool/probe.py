@@ -10,7 +10,7 @@ bilibili.tv is deferred (no player-API view endpoint wired yet) - guarded out be
 from __future__ import annotations
 
 from .config import Settings
-from .player_api import fetch_view
+from .player_api import fetch_view, published_at_iso
 from .resolve import Canonical
 from .schema import ProbeResult
 
@@ -31,6 +31,7 @@ def probe(canonical: Canonical, settings: Settings, *, opener=None) -> ProbeResu
         uploader_mid=view.owner_mid,
         description=view.desc,
         duration_s=view.duration,
+        published_at=published_at_iso(view.pubdate),
         parts=max(len(view.pages), 1),
         part_durations_s=[p.duration for p in view.pages],
     )

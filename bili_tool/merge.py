@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import Settings
-from .player_api import ViewData
+from .player_api import ViewData, published_at_iso
 from .resolve import Canonical
 from .schema import Bundle, Frame, Meta, Segment, Transcript
 
@@ -74,6 +74,7 @@ def build_bundle(
     duration = view.duration if view else info.get("duration")
     uploader_mid = view.owner_mid if view else None
     description = view.desc if view else info.get("description")
+    published_at = published_at_iso(view.pubdate) if view else None
     return Bundle(
         platform=canonical.platform,
         id=canonical.id,
@@ -84,6 +85,7 @@ def build_bundle(
         uploader_mid=uploader_mid,
         description=description,
         duration_s=int(duration) if duration else None,
+        published_at=published_at,
         fetched_at=iso_now(),
         transcript=transcript,
         frames=frames,
@@ -109,6 +111,7 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
         f"uploader: {bundle.uploader or ''}",
         f"uploader_mid: {bundle.uploader_mid if bundle.uploader_mid is not None else ''}",
         f"duration: {dur}",
+        f"published_at: {bundle.published_at or ''}",
         f"fetched_at: {bundle.fetched_at}",
         f"transcript_source: {t.source} ({t.source_reason})",
         f"vision_model: {bundle.meta.vision_model or 'none'}",

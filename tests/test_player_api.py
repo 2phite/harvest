@@ -9,6 +9,7 @@ from bili_tool.player_api import (
     ViewPage,
     cid_for_part,
     fetch_view,
+    published_at_iso,
     select_zh_subtitle,
 )
 from bili_tool.resolve import Canonical
@@ -159,6 +160,58 @@ def test_fetch_view_synthesizes_single_page_when_pages_empty():
     assert page.cid == 555
     assert page.title is None
     assert page.duration == 120
+
+
+def test_published_at_iso_converts_epoch_to_cst_offset():
+    # 2024-06-28T08:00:00Z -> 2024-06-28T16:00:00+08:00 in bilibili's native CST.
+    assert published_at_iso(1719561600) == "2024-06-28T16:00:00+08:00"
+
+
+def test_published_at_iso_none_for_none():
+    assert published_at_iso(None) is None
+
+
+def test_published_at_iso_none_for_zero():
+    assert published_at_iso(0) is None
+
+
+def test_fetch_view_parses_pubdate():
+    canonical = _canonical()
+    payload = {
+        "code": 0,
+        "data": {
+            "aid": 1,
+            "cid": 555,
+            "title": "Solo",
+            "desc": "d",
+            "duration": 120,
+            "pubdate": 1719561600,
+            "owner": {"mid": 1, "name": "Solo Uploader"},
+            "pages": [],
+        },
+    }
+    opener = _FakeOpener({_view_url(canonical): payload})
+    view = fetch_view(canonical, Settings(), opener=opener)
+    assert view.pubdate == 1719561600
+
+
+def test_fetch_view_missing_pubdate_is_none():
+    canonical = _canonical()
+    payload = {
+        "code": 0,
+        "data": {
+            "aid": 1,
+            "cid": 555,
+            "title": "Solo",
+            "desc": "d",
+            "duration": 120,
+            "owner": {"mid": 1, "name": "Solo Uploader"},
+            "pages": [],
+        },
+    }
+    opener = _FakeOpener({_view_url(canonical): payload})
+    view = fetch_view(canonical, Settings(), opener=opener)
+    assert view.pubdate is None
 
 
 def test_fetch_view_empty_desc_becomes_none():

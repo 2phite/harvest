@@ -117,6 +117,7 @@ def test_build_bundle_with_view_present_wins_over_ytdlp():
         title="View Title",
         desc="View description.",
         duration=123,
+        pubdate=1719561600,
         owner_mid=999,
         owner_name="View Owner",
         pages=[],
@@ -135,6 +136,7 @@ def test_build_bundle_with_view_present_wins_over_ytdlp():
     assert bundle.duration_s == 123
     assert bundle.uploader_mid == 999
     assert bundle.description == "View description."
+    assert bundle.published_at == "2024-06-28T16:00:00+08:00"
 
 
 def test_build_bundle_with_view_none_falls_back_to_ytdlp():
@@ -152,6 +154,7 @@ def test_build_bundle_with_view_none_falls_back_to_ytdlp():
     assert bundle.duration_s == 456
     assert bundle.uploader_mid is None
     assert bundle.description == "ytdlp description"
+    assert bundle.published_at is None
 
 
 def test_render_markdown_emits_uploader_mid_and_description_section():
@@ -183,6 +186,46 @@ def test_render_markdown_emits_uploader_mid_and_description_section():
     desc_idx = next(i for i, l in enumerate(lines) if l == "## Description")
     transcript_idx = next(i for i, l in enumerate(lines) if l.startswith("## ["))
     assert h1_idx < desc_idx < transcript_idx
+
+
+def test_render_markdown_emits_published_at_after_duration():
+    bundle = Bundle(
+        platform="bilibili.com",
+        id="BV1",
+        part=1,
+        url="https://b/video/BV1",
+        title="My Title",
+        uploader="My Uploader",
+        published_at="2024-06-28T16:00:00+08:00",
+        duration_s=60,
+        fetched_at="2026-06-29T00:00:00Z",
+        transcript=Transcript(source="whisper", source_reason="test", segments=[_seg(0, 5)]),
+        frames=[],
+        meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
+    )
+    md = render_markdown(bundle, _settings())
+    lines = md.splitlines()
+    assert "published_at: 2024-06-28T16:00:00+08:00" in lines
+    duration_idx = next(i for i, l in enumerate(lines) if l.startswith("duration:"))
+    published_idx = next(i for i, l in enumerate(lines) if l.startswith("published_at:"))
+    assert published_idx == duration_idx + 1
+
+
+def test_render_markdown_published_at_empty_when_none():
+    bundle = Bundle(
+        platform="bilibili.com",
+        id="BV1",
+        part=1,
+        url="https://b/video/BV1",
+        title="My Title",
+        uploader="My Uploader",
+        fetched_at="2026-06-29T00:00:00Z",
+        transcript=Transcript(source="whisper", source_reason="test", segments=[_seg(0, 5)]),
+        frames=[],
+        meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
+    )
+    md = render_markdown(bundle, _settings())
+    assert "published_at: " in md.splitlines()
 
 
 def test_render_markdown_omits_description_section_when_none():
@@ -243,6 +286,7 @@ def test_render_markdown_description_with_literal_dashes_and_hash_line_is_safe()
         "uploader: My Uploader",
         "uploader_mid: 42",
         "duration: ?",
+        "published_at: ",
         "fetched_at: 2026-06-29T00:00:00Z",
         "transcript_source: whisper (test)",
         "vision_model: none",

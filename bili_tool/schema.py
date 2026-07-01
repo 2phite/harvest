@@ -2,7 +2,8 @@
 stable API. bundle.md is the primary ingestion surface (D1); this JSON is the precise backing
 record. Bump SCHEMA_VERSION on any breaking change to the field shape.
 
-1.1 added `uploader_mid` and `description` (additive, nullable — backward compatible).
+1.1 added `uploader_mid`, `description`, and `published_at` (additive, nullable — backward
+compatible).
 """
 
 from __future__ import annotations
@@ -76,6 +77,7 @@ class ProbeResult(BaseModel):
     uploader_mid: int | None = None
     description: str | None = None
     duration_s: int | None = None
+    published_at: str | None = None  # ISO 8601, video's publish time (SPEC: bilibili pubdate)
     parts: int
     part_durations_s: list[int | None] = Field(default_factory=list)
 
@@ -91,6 +93,7 @@ class Bundle(BaseModel):
     uploader_mid: int | None = None
     description: str | None = None
     duration_s: int | None = None
+    published_at: str | None = None  # ISO 8601, video's publish time (SPEC: bilibili pubdate)
     fetched_at: str  # ISO 8601 UTC, e.g. "2026-06-28T12:00:00Z"
     transcript: Transcript
     frames: list[Frame] = Field(default_factory=list)
