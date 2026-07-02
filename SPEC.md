@@ -233,3 +233,19 @@ harvest/
 
 > The package rename (`bili_tool` → `harvest`), env prefix (`BILI_*`/`SESSDATA` → `HARVEST_*` +
 > per-provider), and git remote are a mechanical pass folded into the refactor.
+
+## 10. Known follow-ups (deferred, not defects)
+
+These are economy/purity trade-offs surfaced by the YouTube whole-branch review. None affect
+correctness; each is a deliberate consequence of keeping the provider seam clean (metadata does not
+leak provider-internal fetch state — e.g. bilibili `ViewData` — through `SourceMetadata`).
+
+- **Redundant per-part metadata fetch (bilibili).** `fetch_metadata` runs the view API, then
+  `fetch_subtitle` re-runs `extract_info` + a second view call (more for `part > 1`). `meta` is passed
+  into `fetch_subtitle` but unused. Worth a design pass on whether the seam can carry a reusable
+  handle without re-leaking `ViewData`. (`providers/bilibili.py`, `cli.py` per-part path)
+- **Double `extract_info` (YouTube).** `fetch_metadata` and `fetch_subtitle` each extract in
+  production. Same root cause and same fix shape as the bilibili item. (`providers/youtube.py`)
+- **`.tv` guard is a platform control-flow branch**, duplicated in `cli.py` (ingest) and `probe.py`
+  rather than expressed through the provider registry — a seam-purity wrinkle, unreachable-path today.
+- **Dead field `SubtitleResult.last_cue_end`** (pre-existing), cleanup only. (`subtitles.py`)
