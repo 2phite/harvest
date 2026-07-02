@@ -29,6 +29,8 @@ There is no bare-url form. Supported sources: `bilibili.com`, `youtube.com`.
 --dedup-threshold N   phash hamming distance to collapse near-duplicate frames (default 10)
 --out DIR       output root (default ./out)
 --no-frame-images     omit PNGs from out/ (JSON still records phash/ts/caption)
+--danmaku       opt-in: fetch + mirror the bilibili audience danmaku track (bilibili.com only;
+                default OFF; a graceful no-op with a warning on YouTube)
 ```
 
 ## `probe` — pre-flight metadata
@@ -142,9 +144,52 @@ Output is `out/<id>-p<part>/` containing `bundle.md`, `bundle.json`, and `frames
     "segments": [ { "start": 0.0, "end": 4.2, "text": "…" } ]
   },
   "frames": [ { "ts": 12.5, "path": "frames/000012_500.png", "phash": "…", "caption": "…", "ocr": "…" } ],
+  "danmaku": null,                     // populated only when `--danmaku` ran on a supporting platform
   "meta": { "cookies_used": true, "referer_used": true, "vision_model": "…", "tool_version": "…" }
 }
 ```
+
+### `Danmaku` shapes (matches `schema.py::Danmaku`/`DanmakuWindow`/`DanmakuLine`) — `--danmaku` opt-in
+
+`bundle.danmaku` is `null` unless `harvest ingest --danmaku` was passed **and** the platform supports
+it (bilibili.com only; YouTube has no danmaku concept, so `--danmaku` on a YouTube URL prints a
+warning and leaves `bundle.danmaku` `null` — same as not passing the flag). When `--danmaku` runs on
+bilibili and finds nothing, `bundle.danmaku` is still populated (not null) with `fetched_total: 0` and
+`windows: []` — "requested, found nothing" is distinct from "not requested."
+
+```jsonc
+"danmaku": {
+  "source_total": 12000,             // bilibili's platform-reported total; null if unavailable
+  "fetched_total": 8000,             // how many this fetch actually pulled (endpoint may sample)
+  "sampled": true,                   // fetched_total < source_total -> a sample, not a census
+  "model": "qwen2.5-7b-instruct",    // the LLM that produced the mirror below; provenance
+  "windows": [
+    {
+      "start": 0.0, "end": 75.0,     // content-time window, ALIGNED to the bundle.md chunk boundaries
+      "total": 340,                  // raw danmaku count in this window, BEFORE clustering
+      "lines": [ { "text": "草", "count": 12 }, { "text": "…", "count": 1 } ]
+    }
+  ]
+}
+```
+
+Each `DanmakuWindow.start` coincides with a `## [mm:ss]` chunk mark in bundle.md, so a reader can
+cross-reference the crowd reaction against the transcript/frames at the same timestamp.
+
+**`Danmaku` is a fenced MIRROR, not interpreted content**: every `DanmakuLine.text` is verbatim —
+never paraphrased, translated, decoded, or labeled with sentiment/topic. Lines within a window are
+chronological by content time, never sorted by count.
+
+**Danmaku authority: strictly BELOW `transcript`.** It is crowd expression — jokes, memes, sarcasm,
+frequently factually wrong — never treat it as authoritative content; it is signal about audience
+reaction, not a source of facts about the video.
+
+**bundle.json is always complete; bundle.md is capped.** `bundle.json`'s `danmaku.windows[].lines` is
+the full, uncapped set. `bundle.md` renders a dedicated `## Danmaku` section (below the transcript
+chunks) with a one-line provenance note plus, per non-empty window, a `### [mm:ss] (N danmaku)`
+header and `- 「text」 ×count` lines (the `×count` suffix omitted when `count == 1`); each window caps
+at 50 rendered lines with a `- ﹢N more — see bundle.json` overflow marker beyond that. Atlas needing
+the complete set for a pathologically dense window must read `bundle.json`.
 
 ### Stable vs volatile fields
 
