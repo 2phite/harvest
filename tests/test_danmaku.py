@@ -140,6 +140,15 @@ def test_parse_response_empty_array():
     assert _parse_response("[]") == []
 
 
+def test_parse_response_degrades_gracefully_on_trailing_bracket_prose():
+    # Trailing prose containing a literal "]" (e.g. a bilibili emote shortcode like "[doge]")
+    # confuses the naive find("[")/rfind("]") array extraction: rfind grabs the "]" from the
+    # emote instead of the JSON array's true close, producing an invalid JSON.loads payload.
+    # This must degrade gracefully (no crash aborting the whole stage), not raise.
+    text = '[{"text": "ok", "count": 1}] closing remark with emote [doge]'
+    assert _parse_response(text) == []
+
+
 # ---------------------------------------------------------------------------
 # Pure piece: merging lines across sub-batches
 # ---------------------------------------------------------------------------
@@ -218,12 +227,16 @@ def test_represent_danmaku_orders_lines_chronologically_not_count_descending(tmp
         _rd(2.6, "second thought"),
     ]
     fetch = DanmakuFetch(source_total=4, fetched_total=4, sampled=False, records=records)
-    # The LLM returns clusters in chronological order per the prompt contract; "second thought"
-    # has count 3 (higher) but must stay AFTER "first thought" (count 1) because it appears later
-    # in content time. If the code re-sorted by count, this assertion would fail.
+    # The stub deliberately returns clusters in a NON-chronological (count-descending) order --
+    # "second thought" (count 3) FIRST, "first thought" (count 1) SECOND -- exactly the ordering
+    # bug the probe found (SPEC-locked: count-sort destroys the temporal signal). The prompt asks
+    # the LLM for chronological order, but real model drift can violate it, so the code must
+    # MECHANICALLY reorder by each line's first-occurrence position in the input entries rather
+    # than trust the LLM's returned order. If the code just passed the response through, this
+    # assertion would fail.
     resp = json.dumps([
-        {"text": "first thought", "count": 1},
         {"text": "second thought", "count": 3},
+        {"text": "first thought", "count": 1},
     ])
     client = _StubClient([resp])
     settings = _settings(tmp_path)
@@ -243,6 +256,32 @@ def test_represent_danmaku_orders_lines_chronologically_not_count_descending(tmp
     assert result.sampled is False
     assert result.model == "stub-model"
     assert len(client.chat.completions.calls) == 1
+
+
+def test_represent_danmaku_reorders_unmatched_representative_after_matched_ones(tmp_path):
+    # A representative text that doesn't verbatim-match any input entry is already a prompt-rule
+    # violation, but the mechanical reorder must degrade gracefully rather than crash: matched
+    # lines are sorted by first-appearance in the input; unmatched lines are kept after them, in
+    # the LLM's received order.
+    records = [
+        _rd(1.0, "alpha"),
+        _rd(2.0, "beta"),
+    ]
+    fetch = DanmakuFetch(source_total=2, fetched_total=2, sampled=False, records=records)
+    resp = json.dumps([
+        {"text": "not verbatim", "count": 1},
+        {"text": "beta", "count": 1},
+        {"text": "alpha", "count": 1},
+    ])
+    client = _StubClient([resp])
+    settings = _settings(tmp_path)
+
+    result = represent_danmaku(
+        _canonical(), fetch, settings, boundaries=[0.0], duration_s=10.0, client=client
+    )
+
+    lines = result.windows[0].lines
+    assert [l.text for l in lines] == ["alpha", "beta", "not verbatim"]
 
 
 def test_represent_danmaku_cache_hit_skips_llm_call(tmp_path):
@@ -337,6 +376,39 @@ def test_represent_danmaku_batches_large_windows_and_merges_results(tmp_path, mo
     assert len(client.chat.completions.calls) == 3
     assert [l.text for l in result.windows[0].lines] == ["msg0", "msg1", "msg2", "msg3", "msg4"]
     assert result.windows[0].total == 5
+
+
+def test_represent_danmaku_default_boundaries_windows_via_window_s(tmp_path):
+    # Every other test passes explicit `boundaries=[...]`. This exercises the default branch:
+    # window_s-only -> _boundaries()-derived boundaries + the window_s cache key. Task 4 relies on
+    # this path, so it must be covered end-to-end with a stub client.
+    records = [
+        _rd(1.0, "early one"),
+        _rd(80.0, "late one"),
+        _rd(81.0, "late two"),
+    ]
+    fetch = DanmakuFetch(source_total=3, fetched_total=3, sampled=False, records=records)
+    settings = _settings(tmp_path)
+    resp1 = json.dumps([{"text": "early one", "count": 1}])
+    resp2 = json.dumps([
+        {"text": "late one", "count": 1},
+        {"text": "late two", "count": 1},
+    ])
+    client = _StubClient([resp1, resp2])
+
+    result = represent_danmaku(
+        _canonical(), fetch, settings, window_s=75.0, duration_s=150.0, client=client
+    )
+
+    assert isinstance(result, Danmaku)
+    assert len(client.chat.completions.calls) == 2
+    assert [(w.start, w.end) for w in result.windows] == [(0.0, 75.0), (75.0, 150.0)]
+    assert [w.total for w in result.windows] == [1, 2]
+    assert [l.text for l in result.windows[0].lines] == ["early one"]
+    assert [l.text for l in result.windows[1].lines] == ["late one", "late two"]
+    assert result.source_total == 3
+    assert result.fetched_total == 3
+    assert result.model == "stub-model"
 
 
 def test_represent_danmaku_prompt_forbids_gaps_section_and_count_descending():

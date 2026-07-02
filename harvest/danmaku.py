@@ -147,7 +147,14 @@ def _parse_response(text: str) -> list[DanmakuLine]:
     end = cleaned.rfind("]")
     if start == -1 or end == -1 or end < start:
         return []
-    payload = json.loads(cleaned[start : end + 1])
+    try:
+        payload = json.loads(cleaned[start : end + 1])
+    except json.JSONDecodeError:
+        # Trailing prose can contain a literal "]" (e.g. a bilibili emote shortcode like
+        # "[doge]" in a model's closing remark), which confuses the naive find/rfind array
+        # extraction and produces invalid JSON. Degrade gracefully -- an empty batch result --
+        # rather than let an uncaught exception abort the whole stage.
+        return []
     return [DanmakuLine(text=item["text"], count=int(item.get("count", 1))) for item in payload]
 
 
@@ -169,6 +176,31 @@ def _merge_lines(lines: list[DanmakuLine]) -> list[DanmakuLine]:
 
 
 # ---------------------------------------------------------------------------
+# Pure piece: mechanical chronological reorder (do NOT trust the LLM for order)
+# ---------------------------------------------------------------------------
+
+
+def _reorder_chronologically(
+    lines: list[DanmakuLine], entries: list[tuple[str, int]]
+) -> list[DanmakuLine]:
+    """Reorder `lines` (a batch's parsed LLM response) by each line's `text` FIRST-OCCURRENCE
+    position in `entries` (the deduped, chronologically-ordered batch input). Chronological order
+    within a window is a LOAD-BEARING locked constraint (the probe found count-sort destroyed the
+    temporal signal), so it is enforced mechanically here rather than trusted from the prompt
+    text alone -- real model drift could otherwise silently reintroduce that exact regression.
+
+    Representative text is contractually verbatim, so it should match an input entry; a line
+    whose text does NOT match any entry (already a verbatim-rule violation) is kept after the
+    matched ones, in the order the LLM returned it, so a fence violation degrades gracefully
+    instead of crashing.
+    """
+    order = {text: i for i, (text, _count) in enumerate(entries)}
+    matched = sorted((l for l in lines if l.text in order), key=lambda l: order[l.text])
+    unmatched = [l for l in lines if l.text not in order]
+    return matched + unmatched
+
+
+# ---------------------------------------------------------------------------
 # The fenced LLM cluster call
 # ---------------------------------------------------------------------------
 
@@ -186,7 +218,8 @@ def _cluster_batch(
         max_tokens=max_tokens,
     )
     content = (resp.choices[0].message.content or "").strip()
-    return _parse_response(content)
+    lines = _parse_response(content)
+    return _reorder_chronologically(lines, entries)
 
 
 def _cluster_window(
