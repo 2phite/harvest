@@ -102,6 +102,41 @@ class ProbeResult(BaseModel):
     part_durations_s: list[int | None] = Field(default_factory=list)
 
 
+class DanmakuLine(BaseModel):
+    """A representative danmaku = one cluster head. `text` is VERBATIM (never paraphrased/translated/
+    decoded). `count` = near-identical variants collapsed into this representative within the window
+    (1 = singleton). Lines within a window are ordered CHRONOLOGICALLY by content time, never by
+    count."""
+
+    text: str
+    count: int = 1
+
+
+class DanmakuWindow(BaseModel):
+    """Danmaku pinned to content-time window [start, end) seconds (aligned to bundle chunks).
+    `total` = raw danmaku in the window BEFORE clustering — the density signal that survives even if
+    `lines` is capped in bundle.md."""
+
+    start: float
+    end: float
+    total: int
+    lines: list[DanmakuLine] = Field(default_factory=list)
+
+
+class Danmaku(BaseModel):
+    """Crowd danmaku track — a faithful MIRROR of the audience stream, NOT interpreted content.
+    LOWER AUTHORITY than `transcript`: crowd expression (jokes, memes, sarcasm, frequently 'wrong'
+    claims); never treat as authoritative. bilibili-only; present only when `--danmaku` was requested
+    on a supporting platform (else Bundle.danmaku is null). bundle.json is the COMPLETE record;
+    bundle.md may cap per window with a '+N more' marker (read this JSON for the full set)."""
+
+    source_total: int | None = None  # platform-reported total (stat.danmaku)
+    fetched_total: int  # how many actually pulled (endpoint may sample)
+    sampled: bool  # fetched_total < source_total -> a sample, not a census
+    model: str | None = None  # the LLM that produced this representation (provenance)
+    windows: list[DanmakuWindow] = Field(default_factory=list)
+
+
 class Bundle(BaseModel):
     schema_version: str = SCHEMA_VERSION
     platform: Platform
@@ -119,4 +154,5 @@ class Bundle(BaseModel):
     stats: Stats | None = None
     transcript: Transcript
     frames: list[Frame] = Field(default_factory=list)
+    danmaku: Danmaku | None = None
     meta: Meta
