@@ -109,6 +109,11 @@ def test_fetch_view_parses_full_fixture():
             "desc": "A description.",
             "duration": 600,
             "owner": {"mid": 7, "name": "Uploader"},
+            "pic": "http://i0.hdslb.com/bfs/archive/thumb.jpg",
+            "stat": {
+                "view": 1000, "danmaku": 50, "like": 200, "coin": 30,
+                "favorite": 40, "share": 10, "reply": 20,
+            },
             "pages": [
                 {"page": 1, "cid": 100, "part": "Part One", "duration": 300},
                 {"page": 2, "cid": 200, "part": "Part Two", "duration": 300},
@@ -135,6 +140,42 @@ def test_fetch_view_parses_full_fixture():
     assert view.pages[1].cid == 200
     # exactly one GET for the view endpoint
     assert opener.requested_urls == [_view_url(canonical)]
+    # thumbnail + engagement stats, from the SAME response (no second network call)
+    assert view.pic == "http://i0.hdslb.com/bfs/archive/thumb.jpg"
+    assert view.view_count == 1000
+    assert view.danmaku_count == 50
+    assert view.like_count == 200
+    assert view.coin_count == 30
+    assert view.favorite_count == 40
+    assert view.share_count == 10
+    assert view.reply_count == 20
+
+
+def test_fetch_view_stat_and_pic_absent_are_none():
+    """A response with no `stat`/`pic` keys must degrade to None, not raise."""
+    canonical = _canonical()
+    payload = {
+        "code": 0,
+        "data": {
+            "aid": 1,
+            "cid": 555,
+            "title": "Solo",
+            "desc": "",
+            "duration": 120,
+            "owner": {"mid": 1, "name": "Solo Uploader"},
+            "pages": [],
+        },
+    }
+    opener = _FakeOpener({_view_url(canonical): payload})
+    view = fetch_view(canonical, Settings(), opener=opener)
+    assert view.pic is None
+    assert view.view_count is None
+    assert view.danmaku_count is None
+    assert view.like_count is None
+    assert view.coin_count is None
+    assert view.favorite_count is None
+    assert view.share_count is None
+    assert view.reply_count is None
 
 
 def test_fetch_view_synthesizes_single_page_when_pages_empty():

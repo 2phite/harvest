@@ -114,6 +114,8 @@ def test_build_bundle_consumes_source_metadata():
         platform="bilibili.com", id="BV1", title="View Title", uploader="View Owner",
         uploader_id="999", description="View description.", duration_s=123,
         published_at="2024-06-28T16:00:00+08:00", parts=1, part_durations_s=[123],
+        thumbnail_url="http://x/thumb.jpg", view_count=1000, like_count=200,
+        coin_count=30, favorite_count=40, share_count=10, reply_count=20, danmaku_count=50,
     )
     bundle = build_bundle(_canonical(), meta, _transcript(), [], _settings())
     assert bundle.title == "View Title"
@@ -122,6 +124,29 @@ def test_build_bundle_consumes_source_metadata():
     assert bundle.uploader_id == "999"
     assert bundle.description == "View description."
     assert bundle.published_at == "2024-06-28T16:00:00+08:00"
+    assert bundle.thumbnail_url == "http://x/thumb.jpg"
+    assert bundle.stats.view_count == 1000
+    assert bundle.stats.like_count == 200
+    assert bundle.stats.coin_count == 30
+    assert bundle.stats.favorite_count == 40
+    assert bundle.stats.share_count == 10
+    assert bundle.stats.reply_count == 20
+    assert bundle.stats.danmaku_count == 50
+
+
+def test_build_bundle_with_no_stats_or_thumbnail_leaves_them_none():
+    meta = SourceMetadata(
+        platform="youtube.com", id="x", title="yt title", uploader="yt uploader",
+        uploader_id=None, description="yt description", duration_s=456,
+        published_at=None, parts=1, part_durations_s=[456],
+    )
+    bundle = build_bundle(_canonical(), meta, _transcript(), [], _settings())
+    assert bundle.thumbnail_url is None
+    # stats is still populated (view_count/like_count fields exist even if all None) --
+    # mirrors probe's Stats(...) construction so Bundle and ProbeResult behave consistently.
+    assert bundle.stats is not None
+    assert bundle.stats.view_count is None
+    assert bundle.stats.danmaku_count is None
 
 
 def test_build_bundle_with_missing_metadata_fields_is_none():
@@ -137,6 +162,41 @@ def test_build_bundle_with_missing_metadata_fields_is_none():
     assert bundle.uploader_id is None
     assert bundle.description == "yt description"
     assert bundle.published_at is None
+
+
+def test_render_markdown_emits_thumbnail_url_in_header():
+    bundle = Bundle(
+        platform="bilibili.com",
+        id="BV1",
+        part=1,
+        url="https://b/video/BV1",
+        title="My Title",
+        uploader="My Uploader",
+        thumbnail_url="http://x/thumb.jpg",
+        fetched_at="2026-06-29T00:00:00Z",
+        transcript=Transcript(source="whisper", source_reason="test", segments=[_seg(0, 5)]),
+        frames=[],
+        meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
+    )
+    md = render_markdown(bundle, _settings())
+    assert "thumbnail_url: http://x/thumb.jpg" in md.splitlines()
+
+
+def test_render_markdown_thumbnail_url_empty_when_none():
+    bundle = Bundle(
+        platform="bilibili.com",
+        id="BV1",
+        part=1,
+        url="https://b/video/BV1",
+        title="My Title",
+        uploader="My Uploader",
+        fetched_at="2026-06-29T00:00:00Z",
+        transcript=Transcript(source="whisper", source_reason="test", segments=[_seg(0, 5)]),
+        frames=[],
+        meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
+    )
+    md = render_markdown(bundle, _settings())
+    assert "thumbnail_url: " in md.splitlines()
 
 
 def test_render_markdown_emits_uploader_id_and_description_section():
@@ -267,6 +327,7 @@ def test_render_markdown_description_with_literal_dashes_and_hash_line_is_safe()
         "title: My Title",
         "uploader: My Uploader",
         "uploader_id: 42",
+        "thumbnail_url: ",
         "duration: ?",
         "published_at: ",
         "fetched_at: 2026-06-29T00:00:00Z",
@@ -290,9 +351,13 @@ def test_render_markdown_description_with_literal_dashes_and_hash_line_is_safe()
 
 
 def test_bundle_json_roundtrips_new_fields(tmp_path):
+    from harvest.schema import Stats
+
     bundle = _bundle_with_frame(None)
     bundle.uploader_id = "123"
     bundle.description = "desc text"
+    bundle.thumbnail_url = "http://x/thumb.jpg"
+    bundle.stats = Stats(view_count=1000, danmaku_count=50)
     settings = Settings()
     settings.out_dir = tmp_path / "out"
 
@@ -301,3 +366,6 @@ def test_bundle_json_roundtrips_new_fields(tmp_path):
     data = json.loads((out / "bundle.json").read_text(encoding="utf-8"))
     assert data["uploader_id"] == "123"
     assert data["description"] == "desc text"
+    assert data["thumbnail_url"] == "http://x/thumb.jpg"
+    assert data["stats"]["view_count"] == 1000
+    assert data["stats"]["danmaku_count"] == 50

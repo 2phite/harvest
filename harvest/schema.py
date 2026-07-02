@@ -67,6 +67,21 @@ class Meta(BaseModel):
     tool_version: str
 
 
+class Stats(BaseModel):
+    """Engagement metrics — a POINT-IN-TIME SNAPSHOT as of the enclosing record's `fetched_at`,
+    NOT stable identity. All fields volatile (generally grow, but can be reset/hidden) and
+    per-platform partial: bilibili fills all; YouTube fills view_count/like_count only.
+    Null-tolerate every field; never compare across bundles without accounting for each
+    record's `fetched_at`."""
+    view_count:     int | None = None
+    like_count:     int | None = None
+    coin_count:     int | None = None   # bilibili 硬币; YouTube null
+    favorite_count: int | None = None   # bilibili 收藏; YouTube null
+    share_count:    int | None = None   # bilibili 分享; YouTube null
+    reply_count:    int | None = None   # top-level comments (bilibili stat.reply); YT null
+    danmaku_count:  int | None = None   # bilibili danmaku total (--danmaku opt-in signal); YT null
+
+
 class ProbeResult(BaseModel):
     """Cheap pre-flight metadata (no transcript/frames): lets Atlas estimate workload before
     committing to the full pipeline."""
@@ -80,6 +95,9 @@ class ProbeResult(BaseModel):
     description: str | None = None
     duration_s: int | None = None
     published_at: str | None = None  # ISO 8601, video's publish time (SPEC: bilibili pubdate)
+    thumbnail_url: str | None = None  # intrinsic/descriptive, NOT part of `stats`
+    fetched_at: str | None = None  # ISO 8601 UTC, e.g. "2026-06-28T12:00:00Z" -- when probe ran
+    stats: Stats | None = None
     parts: int
     part_durations_s: list[int | None] = Field(default_factory=list)
 
@@ -96,7 +114,9 @@ class Bundle(BaseModel):
     description: str | None = None
     duration_s: int | None = None
     published_at: str | None = None  # ISO 8601, video's publish time (SPEC: bilibili pubdate)
+    thumbnail_url: str | None = None  # intrinsic/descriptive, NOT part of `stats`
     fetched_at: str  # ISO 8601 UTC, e.g. "2026-06-28T12:00:00Z"
+    stats: Stats | None = None
     transcript: Transcript
     frames: list[Frame] = Field(default_factory=list)
     meta: Meta

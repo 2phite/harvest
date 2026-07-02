@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .config import Settings
 from .providers.base import Canonical, SourceMetadata
-from .schema import Bundle, Frame, Meta, Segment, Transcript
+from .schema import Bundle, Frame, Meta, Segment, Stats, Transcript
 
 
 def iso_now() -> str:
@@ -69,6 +69,12 @@ def build_bundle(
         platform=canonical.platform, id=canonical.id, part=canonical.part, url=canonical.url,
         title=meta.title, uploader=meta.uploader, uploader_id=meta.uploader_id,
         description=meta.description, duration_s=meta.duration_s, published_at=meta.published_at,
+        thumbnail_url=meta.thumbnail_url,
+        stats=Stats(
+            view_count=meta.view_count, like_count=meta.like_count, coin_count=meta.coin_count,
+            favorite_count=meta.favorite_count, share_count=meta.share_count,
+            reply_count=meta.reply_count, danmaku_count=meta.danmaku_count,
+        ),
         fetched_at=iso_now(), transcript=transcript, frames=frames,
         meta=Meta(
             cookies_used=bool(settings.sessdata or settings.cookies_browser),
@@ -90,6 +96,7 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
         f"title: {bundle.title or ''}",
         f"uploader: {bundle.uploader or ''}",
         f"uploader_id: {bundle.uploader_id or ''}",
+        f"thumbnail_url: {bundle.thumbnail_url or ''}",
         f"duration: {dur}",
         f"published_at: {bundle.published_at or ''}",
         f"fetched_at: {bundle.fetched_at}",

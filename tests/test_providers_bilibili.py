@@ -35,6 +35,9 @@ def test_fetch_metadata_maps_view_to_source_metadata():
     payload = {"code": 0, "data": {
         "aid": 42, "cid": 100, "title": "My Video", "desc": "D", "duration": 600,
         "pubdate": 1719561600, "owner": {"mid": 7, "name": "Up"},
+        "pic": "http://i0.hdslb.com/bfs/archive/thumb.jpg",
+        "stat": {"view": 1000, "danmaku": 50, "like": 200, "coin": 30,
+                  "favorite": 40, "share": 10, "reply": 20},
         "pages": [{"page": 1, "cid": 100, "part": "P1", "duration": 300},
                   {"page": 2, "cid": 200, "part": "P2", "duration": 300}]}}
     opener = _FakeOpener({_view_url(canonical): payload})
@@ -46,6 +49,14 @@ def test_fetch_metadata_maps_view_to_source_metadata():
     assert meta.published_at == "2024-06-28T16:00:00+08:00"
     assert meta.parts == 2
     assert meta.part_durations_s == [300, 300]
+    assert meta.thumbnail_url == "http://i0.hdslb.com/bfs/archive/thumb.jpg"
+    assert meta.view_count == 1000
+    assert meta.danmaku_count == 50
+    assert meta.like_count == 200
+    assert meta.coin_count == 30
+    assert meta.favorite_count == 40
+    assert meta.share_count == 10
+    assert meta.reply_count == 20
 
 
 def test_fetch_metadata_uses_canonical_platform_for_bilibili_tv():

@@ -58,7 +58,11 @@ class ViewPage(BaseModel):
 
 
 class ViewData(BaseModel):
-    """Parsed `web-interface/view` response: the single source of truth for video metadata."""
+    """Parsed `web-interface/view` response: the single source of truth for video metadata.
+
+    `pic` + the `*_count` fields (Task 1) come from the SAME response's `data.pic`/`data.stat.*`
+    -- no second network call.
+    """
 
     aid: int | None = None
     cid: int | None = None
@@ -68,6 +72,14 @@ class ViewData(BaseModel):
     pubdate: int | None = None  # Unix seconds, publish time (SPEC: published_at source)
     owner_mid: int | None = None
     owner_name: str | None = None
+    pic: str | None = None
+    view_count: int | None = None
+    danmaku_count: int | None = None
+    like_count: int | None = None
+    coin_count: int | None = None
+    favorite_count: int | None = None
+    share_count: int | None = None
+    reply_count: int | None = None
     pages: list[ViewPage] = []
 
 
@@ -130,6 +142,7 @@ def fetch_view(canonical: Canonical, settings: Settings, *, opener=None) -> View
     data = view.get("data") or {}
     owner = data.get("owner") or {}
     desc = data.get("desc") or None
+    stat = data.get("stat") or {}
 
     try:
         raw_pages = data.get("pages") or []
@@ -157,6 +170,14 @@ def fetch_view(canonical: Canonical, settings: Settings, *, opener=None) -> View
             pubdate=data.get("pubdate"),
             owner_mid=owner.get("mid"),
             owner_name=owner.get("name"),
+            pic=data.get("pic") or None,
+            view_count=stat.get("view"),
+            danmaku_count=stat.get("danmaku"),
+            like_count=stat.get("like"),
+            coin_count=stat.get("coin"),
+            favorite_count=stat.get("favorite"),
+            share_count=stat.get("share"),
+            reply_count=stat.get("reply"),
             pages=pages,
         )
     except ValidationError as exc:

@@ -48,6 +48,14 @@ class BilibiliProvider:
             published_at=published_at_iso(view.pubdate),
             parts=max(len(view.pages), 1),
             part_durations_s=[pg.duration for pg in view.pages],
+            thumbnail_url=view.pic,
+            view_count=view.view_count,
+            like_count=view.like_count,
+            coin_count=view.coin_count,
+            favorite_count=view.favorite_count,
+            share_count=view.share_count,
+            reply_count=view.reply_count,
+            danmaku_count=view.danmaku_count,
         )
 
     def enumerate_parts(self, canonical, settings, *, opener=None) -> int:
