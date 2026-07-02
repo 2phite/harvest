@@ -72,7 +72,7 @@ def build_bundle(
     title = view.title if view else info.get("title")
     uploader = view.owner_name if view else info.get("uploader")
     duration = view.duration if view else info.get("duration")
-    uploader_mid = view.owner_mid if view else None
+    uploader_id = str(view.owner_mid) if (view and view.owner_mid is not None) else None
     description = view.desc if view else info.get("description")
     published_at = published_at_iso(view.pubdate) if view else None
     return Bundle(
@@ -82,7 +82,7 @@ def build_bundle(
         url=canonical.url,
         title=title,
         uploader=uploader,
-        uploader_mid=uploader_mid,
+        uploader_id=uploader_id,
         description=description,
         duration_s=int(duration) if duration else None,
         published_at=published_at,
@@ -109,7 +109,7 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
         f"url: {bundle.url}",
         f"title: {bundle.title or ''}",
         f"uploader: {bundle.uploader or ''}",
-        f"uploader_mid: {bundle.uploader_mid if bundle.uploader_mid is not None else ''}",
+        f"uploader_id: {bundle.uploader_id or ''}",
         f"duration: {dur}",
         f"published_at: {bundle.published_at or ''}",
         f"fetched_at: {bundle.fetched_at}",

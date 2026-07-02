@@ -26,7 +26,7 @@ _ZH_KEYS = ("zh-Hans", "zh-CN", "zh", "ai-zh")
 @dataclass
 class SubtitleResult:
     found: bool
-    source: str | None  # "human-sub" | "ai-zh" | None
+    source: str | None  # "human-sub" | "auto-sub" | None
     lang: str | None
     segments: list[Segment] = field(default_factory=list)
     reason: str = ""  # human-readable, flows into the D2 bundle.md header
@@ -87,7 +87,7 @@ def _pick_track(info: dict) -> tuple[str, str, list] | None:
             return "human-sub", key, human[key]
     for key in _ZH_KEYS:
         if key in auto:
-            return "ai-zh", key, auto[key]
+            return "auto-sub", key, auto[key]
     return None
 
 
@@ -191,7 +191,7 @@ def _acquire(
     if got is None:
         return None
     lang, segments = got
-    return "ai-zh", lang, segments
+    return "auto-sub", lang, segments
 
 
 def fetch_subtitle_segments(

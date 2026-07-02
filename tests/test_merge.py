@@ -134,7 +134,7 @@ def test_build_bundle_with_view_present_wins_over_ytdlp():
     assert bundle.title == "View Title"
     assert bundle.uploader == "View Owner"
     assert bundle.duration_s == 123
-    assert bundle.uploader_mid == 999
+    assert bundle.uploader_id == "999"
     assert bundle.description == "View description."
     assert bundle.published_at == "2024-06-28T16:00:00+08:00"
 
@@ -152,12 +152,12 @@ def test_build_bundle_with_view_none_falls_back_to_ytdlp():
     assert bundle.title == "ytdlp title"
     assert bundle.uploader == "ytdlp uploader"
     assert bundle.duration_s == 456
-    assert bundle.uploader_mid is None
+    assert bundle.uploader_id is None
     assert bundle.description == "ytdlp description"
     assert bundle.published_at is None
 
 
-def test_render_markdown_emits_uploader_mid_and_description_section():
+def test_render_markdown_emits_uploader_id_and_description_section():
     bundle = Bundle(
         platform="bilibili.com",
         id="BV1",
@@ -165,7 +165,7 @@ def test_render_markdown_emits_uploader_mid_and_description_section():
         url="https://b/video/BV1",
         title="My Title",
         uploader="My Uploader",
-        uploader_mid=42,
+        uploader_id="42",
         description="Line one.\n\nLine two with a URL: https://example.com",
         fetched_at="2026-06-29T00:00:00Z",
         transcript=Transcript(source="whisper", source_reason="test", segments=[_seg(0, 5)]),
@@ -173,10 +173,10 @@ def test_render_markdown_emits_uploader_mid_and_description_section():
         meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
     )
     md = render_markdown(bundle, _settings())
-    assert "uploader_mid: 42" in md
+    assert "uploader_id: 42" in md
     lines = md.splitlines()
     uploader_idx = next(i for i, l in enumerate(lines) if l.startswith("uploader:"))
-    mid_idx = next(i for i, l in enumerate(lines) if l.startswith("uploader_mid:"))
+    mid_idx = next(i for i, l in enumerate(lines) if l.startswith("uploader_id:"))
     assert mid_idx == uploader_idx + 1
     assert "## Description" in md
     assert "Line one." in md
@@ -243,7 +243,7 @@ def test_render_markdown_omits_description_section_when_none():
     )
     md = render_markdown(bundle, _settings())
     assert "## Description" not in md
-    assert "uploader_mid: " in md  # still emitted, empty
+    assert "uploader_id: " in md  # still emitted, empty
 
 
 def test_render_markdown_description_with_literal_dashes_and_hash_line_is_safe():
@@ -259,7 +259,7 @@ def test_render_markdown_description_with_literal_dashes_and_hash_line_is_safe()
         url="https://b/video/BV1",
         title="My Title",
         uploader="My Uploader",
-        uploader_mid=42,
+        uploader_id="42",
         description=description,
         fetched_at="2026-06-29T00:00:00Z",
         transcript=Transcript(source="whisper", source_reason="test", segments=[_seg(0, 5)]),
@@ -284,7 +284,7 @@ def test_render_markdown_description_with_literal_dashes_and_hash_line_is_safe()
         "url: https://b/video/BV1",
         "title: My Title",
         "uploader: My Uploader",
-        "uploader_mid: 42",
+        "uploader_id: 42",
         "duration: ?",
         "published_at: ",
         "fetched_at: 2026-06-29T00:00:00Z",
@@ -309,7 +309,7 @@ def test_render_markdown_description_with_literal_dashes_and_hash_line_is_safe()
 
 def test_bundle_json_roundtrips_new_fields(tmp_path):
     bundle = _bundle_with_frame(None)
-    bundle.uploader_mid = 123
+    bundle.uploader_id = "123"
     bundle.description = "desc text"
     settings = Settings()
     settings.out_dir = tmp_path / "out"
@@ -317,5 +317,5 @@ def test_bundle_json_roundtrips_new_fields(tmp_path):
     out = write_bundle(bundle, settings, frame_sources={}, frame_images=False)
 
     data = json.loads((out / "bundle.json").read_text(encoding="utf-8"))
-    assert data["uploader_mid"] == 123
+    assert data["uploader_id"] == "123"
     assert data["description"] == "desc text"

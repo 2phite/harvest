@@ -201,4 +201,5 @@ def part_segments(
     segments = parse_bcc(raw)
     if not segments:
         return None
+    # language key (provenance set to "auto-sub" by subtitles._acquire)
     return (pick.get("lan") or "ai-zh"), segments

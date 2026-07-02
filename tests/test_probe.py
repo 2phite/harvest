@@ -39,7 +39,7 @@ def test_probe_maps_full_fixture_to_probe_result():
     assert result.id == "BV1"
     assert result.title == "My Video"
     assert result.uploader == "Uploader"
-    assert result.uploader_mid == 7
+    assert result.uploader_id == "7"
     assert result.description == "A description."
     assert result.duration_s == 600
     assert result.published_at == "2024-06-28T16:00:00+08:00"
@@ -107,3 +107,15 @@ def test_probe_propagates_view_error():
 
     with pytest.raises(ViewError):
         probe(canonical, Settings(), opener=opener)
+
+
+def test_schema_version_is_1_0():
+    from harvest.schema import SCHEMA_VERSION
+    assert SCHEMA_VERSION == "1.0"
+
+
+def test_probe_result_uses_uploader_id_string():
+    from harvest.schema import ProbeResult
+    r = ProbeResult(platform="youtube.com", id="x", uploader_id="UCabc", parts=1)
+    assert r.uploader_id == "UCabc"
+    assert not hasattr(r, "uploader_mid")

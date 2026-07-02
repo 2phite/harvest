@@ -110,7 +110,7 @@ def test_probe_path_prints_only_json_to_stdout(monkeypatch, capsys):
             id="BV1",
             title="T",
             uploader="U",
-            uploader_mid=1,
+            uploader_id="1",
             description="d",
             duration_s=100,
             parts=1,
