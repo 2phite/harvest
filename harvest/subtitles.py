@@ -142,6 +142,25 @@ def parse_srt(text: str) -> list[Segment]:
     return out
 
 
+def parse_vtt(text: str) -> list[Segment]:
+    """WebVTT (YouTube timed-text). Blank-line-delimited cue blocks; a cue block has a timing
+    line (optional cue-id line above it). WEBVTT header and NOTE blocks lack a timing line and
+    are skipped. Text lines after the timing line are joined with spaces."""
+    out: list[Segment] = []
+    for block in re.split(r"\n\s*\n", text.strip()):
+        m = _SRT_TIME.search(block)
+        if not m:
+            continue
+        h1, m1, s1, ms1, h2, m2, s2, ms2 = map(int, m.groups())
+        start = h1 * 3600 + m1 * 60 + s1 + ms1 / 1000
+        end = h2 * 3600 + m2 * 60 + s2 + ms2 / 1000
+        lines = block.split("\n")
+        ti = next((i for i, ln in enumerate(lines) if "-->" in ln), 0)
+        body = " ".join(ln.strip() for ln in lines[ti + 1:] if ln.strip())
+        out.append(Segment(start=start, end=end, text=body))
+    return out
+
+
 def _segments_text(segments: list[Segment]) -> str:
     """Normalized concatenation of cue text — the comparison surface for the #6357 check."""
     return "".join(s.text.strip() for s in segments)
