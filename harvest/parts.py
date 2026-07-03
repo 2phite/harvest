@@ -10,15 +10,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable
-from urllib.parse import urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from .resolve import Canonical
 
 
 def part_url(base_url: str, part: int) -> str:
-    """Canonical per-part URL: set ?p=<part>, replacing any existing p= query."""
+    """Canonical per-part URL: set/override ?p=<part>, preserving every other query param.
+
+    bilibili carries its id in the path (`/video/BVxxx`), so only `p=` matters there. YouTube
+    carries its id in the query (`watch?v=<id>`), so we must NOT clobber the whole query —
+    dropping `v=` yields `watch?p=1`, a video-less feed yt-dlp reports as title='recommended'
+    with no duration (issue #7). Merge instead of replace; `p=` is harmless to YouTube."""
     parsed = urlparse(base_url)
-    return urlunparse(parsed._replace(query=urlencode({"p": part})))
+    query = dict(parse_qsl(parsed.query))
+    query["p"] = str(part)
+    return urlunparse(parsed._replace(query=urlencode(query)))
 
 
 def select_parts(args, canonical: Canonical, *, total: int) -> list[int]:

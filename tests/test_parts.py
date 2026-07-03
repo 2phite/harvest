@@ -16,6 +16,15 @@ def test_part_url_replaces_existing_part():
     )
 
 
+def test_part_url_preserves_youtube_video_id():
+    # issue #7: YouTube's id lives in the query (?v=), not the path. part_url must set p=
+    # WITHOUT wiping v=, or yt-dlp gets watch?p=1 (a video-less feed titled "recommended").
+    assert (
+        part_url("https://www.youtube.com/watch?v=F8X9_Dp3ZUk", 1)
+        == "https://www.youtube.com/watch?v=F8X9_Dp3ZUk&p=1"
+    )
+
+
 def test_select_parts_all():
     args = type("A", (), {"all_parts": True, "part": None})()
     c = Canonical("bilibili.com", "BV1", 1, "u")
