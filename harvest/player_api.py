@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -290,6 +291,10 @@ def fetch_danmaku(
     if not cid:
         return DanmakuFetch(source_total=source_total, fetched_total=0, records=[])
 
+    expected_segments = (
+        math.ceil(view.duration / 360) if view is not None and view.duration else None
+    )
+
     records: list[RawDanmaku] = []
     idx = 1
     while True:
@@ -297,6 +302,15 @@ def fetch_danmaku(
         try:
             body = op.open(url, timeout=60).read()
         except URLError as exc:
+            if expected_segments is not None and idx > expected_segments:
+                # bilibili returns 304/errors for the first segment past real content -- this is
+                # the normal end-of-data terminator, not a truncation, so no warning.
+                logger.debug(
+                    "danmaku seg.so pagination ended at segment_index=%d for cid=%s "
+                    "(past expected_segments=%d): %s",
+                    idx, cid, expected_segments, exc,
+                )
+                break
             logger.warning(
                 "danmaku seg.so pagination stopped early at segment_index=%d for cid=%s: %s",
                 idx, cid, exc,

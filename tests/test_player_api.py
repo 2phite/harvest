@@ -627,6 +627,85 @@ def test_fetch_danmaku_view_error_returns_empty_result_not_raise():
     assert result.source_total is None
 
 
+def test_fetch_danmaku_no_warning_on_clean_past_end_termination(caplog):
+    """A 304 (or any URLError) on the segment immediately past the last expected segment (per
+    `ceil(view.duration / 360)`) is the normal end-of-data terminator bilibili uses -- it must
+    NOT log a "stopped early" warning, since nothing was actually truncated."""
+    import logging
+    from urllib.error import HTTPError
+
+    from harvest.player_api import fetch_danmaku
+
+    canonical = _canonical(part=1)
+    view_payload = {
+        "code": 0,
+        "data": {
+            "aid": 42, "cid": 100, "title": "T", "desc": "d", "duration": 400,
+            "owner": {"mid": 7, "name": "U"}, "stat": {"danmaku": 2},
+            "pages": [{"page": 1, "cid": 100, "part": "P1", "duration": 400}],
+        },
+    }
+    seg1 = _encode_seg([(1000, "first", 0)])
+    seg2 = _encode_seg([(2000, "second", 0)])
+
+    class _PastEndOpener(_FakeOpener):
+        def open(self, url: str, timeout: int = 60):
+            if url == _seg_url(100, 3):
+                self.requested_urls.append(url)
+                raise HTTPError(url, 304, "Not Modified", {}, None)
+            return super().open(url, timeout)
+
+    opener = _PastEndOpener({
+        _view_url(canonical): view_payload,
+        _seg_url(100, 1): seg1,
+        _seg_url(100, 2): seg2,
+    })
+
+    with caplog.at_level(logging.WARNING):
+        result = fetch_danmaku(canonical, Settings(), opener=opener)
+
+    assert result.fetched_total == 2
+    assert [r.text for r in result.records] == ["first", "second"]
+    assert not any("stopped early" in rec.message.lower() for rec in caplog.records)
+
+
+def test_fetch_danmaku_warns_on_genuine_mid_stream_truncation(caplog):
+    """A URLError that hits well before the expected last segment (per
+    `ceil(view.duration / 360)`) is a genuine mid-stream failure, not the expected
+    past-the-end terminator -- the "stopped early" warning must still fire."""
+    import logging
+    from urllib.error import HTTPError
+
+    from harvest.player_api import fetch_danmaku
+
+    canonical = _canonical(part=1)
+    view_payload = {
+        "code": 0,
+        "data": {
+            "aid": 42, "cid": 100, "title": "T", "desc": "d", "duration": 1904,
+            "owner": {"mid": 7, "name": "U"}, "stat": {"danmaku": 1},
+            "pages": [{"page": 1, "cid": 100, "part": "P1", "duration": 1904}],
+        },
+    }
+    seg1 = _encode_seg([(1000, "first", 0)])
+
+    class _MidStreamOpener(_FakeOpener):
+        def open(self, url: str, timeout: int = 60):
+            if url == _seg_url(100, 2):
+                self.requested_urls.append(url)
+                raise HTTPError(url, 304, "Not Modified", {}, None)
+            return super().open(url, timeout)
+
+    opener = _MidStreamOpener({_view_url(canonical): view_payload, _seg_url(100, 1): seg1})
+
+    with caplog.at_level(logging.WARNING):
+        result = fetch_danmaku(canonical, Settings(), opener=opener)
+
+    assert result.fetched_total == 1
+    assert result.records[0].text == "first"
+    assert any("stopped early" in rec.message.lower() for rec in caplog.records)
+
+
 @pytest.mark.live
 def test_live_fetch_danmaku_census_does_not_truncate_multi_segment_video():
     """Real network + cookies: a long (>360s, i.e. multi-segment) public bilibili video. Each
@@ -642,8 +721,9 @@ def test_live_fetch_danmaku_census_does_not_truncate_multi_segment_video():
 
     settings = Settings.load()
     # A long-form upload -- swap for any known multi-segment (>360s) public BV if this one
-    # disappears/changes.
-    canonical = resolve("https://www.bilibili.com/video/BV11Kc2zZEUr")
+    # disappears/changes (bilibili content mutates over time; the check below skips gracefully
+    # rather than failing if it's since become single-segment).
+    canonical = resolve("https://www.bilibili.com/video/BV11T6UBVEuV")
     real_opener = _opener(settings)
     seg_requests: list[str] = []
 
@@ -655,9 +735,11 @@ def test_live_fetch_danmaku_census_does_not_truncate_multi_segment_video():
 
     counting = _CountingOpener()
     view = fetch_view(canonical, settings, opener=counting)
-    assert view.duration and view.duration > 360, (
-        "fixture video must be multi-segment (duration_s > 360) for this check to be meaningful"
-    )
+    if not (view.duration and view.duration > 360):
+        pytest.skip(
+            "fixture video is no longer multi-segment (duration_s > 360); "
+            "bilibili content mutates over time -- swap in a new long-form BV"
+        )
 
     result = fetch_danmaku(canonical, settings, opener=counting, view=view)
 
