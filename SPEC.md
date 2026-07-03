@@ -183,7 +183,7 @@ Trimmed fixtures seeding the four YouTube branches live in `tests/fixtures/youtu
   language is its own field. Authority order (documented for Atlas): `human-sub` > `whisper` >
   `auto-sub`.
 - **bundle.md is slide-chunked, always.** Chunk = "what was on screen + the speech while it was up."
-  Boundaries = deduped frame timestamps when vision is on, else a fixed wall-clock window (~75s).
+  Boundaries = deduped frame timestamps when vision is on, else a fixed wall-clock window (60s).
   Segments assigned whole by start timestamp, never split. One coarse `[mm:ss]` header per chunk.
 - **Frame candidates = periodic sampling + phash dedup**, not scene-cut detection: target content is
   continuous-shot screen recordings with soft slide transitions (no hard cuts). Same goal ("one frame

@@ -423,7 +423,7 @@ def _danmaku_setup(monkeypatch, *, provider, danmaku_result=None):
     return calls
 
 
-def test_process_part_danmaku_flag_on_bilibili_populates_bundle_and_passes_boundaries(monkeypatch):
+def test_process_part_danmaku_uses_fixed_danmaku_window_not_frame_boundaries(monkeypatch):
     from harvest.providers.base import SourceMetadata
     from harvest.resolve import Canonical
     from harvest.schema import Danmaku
@@ -451,9 +451,11 @@ def test_process_part_danmaku_flag_on_bilibili_populates_bundle_and_passes_bound
     cli.process_part(canonical, settings, args)
 
     assert calls["represent_danmaku"]["fetch"] is fetch_sentinel
-    assert calls["represent_danmaku"]["boundaries"] == [0.0, 75.0]  # fixed window, no frames
+    # Danmaku is windowed on its OWN fixed cadence, decoupled from frame/transcript chunk
+    # boundaries — so a static slide can't dump minutes of danmaku into one window.
+    assert calls["represent_danmaku"]["boundaries"] is None
     assert calls["represent_danmaku"]["duration_s"] == 100  # meta.duration_s, not omitted
-    assert calls["represent_danmaku"]["window_s"] == settings.chunk_window_s
+    assert calls["represent_danmaku"]["window_s"] == settings.danmaku_window_s
     assert calls["build_danmaku"] is danmaku_result
 
 

@@ -128,7 +128,13 @@ class Settings:
     scene_threshold: float = 27.0  # PySceneDetect ContentDetector default (secondary signal)
     # hamming collapse; calibrated step 4 (within-slide jitter <10, slide cut >=16)
     phash_dedup_threshold: int = 10
-    chunk_window_s: float = 75.0  # D3 wall-clock chunk fallback (~60-90s)
+    chunk_window_s: float = 60.0  # D3 wall-clock chunk fallback; 60s = minute-aligned buckets
+    # Danmaku bucket width — deliberately narrower than chunk_window_s and INDEPENDENT of it.
+    # 15s tracks the crowd's real pace: an empirical probe (6 videos, 5.3k danmaku) found one
+    # coherent "beat" (a joke-phase, meme-mutation step, or claim+rebuttal) spans ~7-20s, so 15s
+    # holds ~one beat without merging distinct ones (30s+ merges; 75s collapses floods to 1-2
+    # mega-buckets). Sparse videos stay fragmented at any width — that's honest, not an artifact.
+    danmaku_window_s: float = 15.0
 
     # quality gate (D5)
     quality: QualityThresholds = field(default_factory=QualityThresholds)
@@ -145,6 +151,9 @@ class Settings:
             lmstudio_danmaku_model=os.environ.get("HARVEST_DANMAKU_MODEL", ""),
             lmstudio_danmaku_max_tokens=int(
                 os.environ.get("HARVEST_DANMAKU_MAX_TOKENS", cls.lmstudio_danmaku_max_tokens)
+            ),
+            danmaku_window_s=float(
+                os.environ.get("HARVEST_DANMAKU_WINDOW_S", cls.danmaku_window_s)
             ),
             sessdata=os.environ.get("SESSDATA") or None,
             cookies_browser=os.environ.get("HARVEST_COOKIES_BROWSER", cls.cookies_browser),

@@ -14,7 +14,7 @@ import sys
 from .cache import fs_key, load_json, save_json
 from .config import Settings
 from .danmaku import represent_danmaku
-from .merge import build_bundle, chunk_boundaries, write_bundle
+from .merge import build_bundle, write_bundle
 from .parts import run_parts, select_parts
 from .player_api import ViewError
 from .probe import probe
@@ -172,13 +172,12 @@ def process_part(canonical: Canonical, settings: Settings, args) -> None:
                   f"HARVEST_DANMAKU_MODEL not set")
         else:
             fetch = provider.fetch_danmaku(canonical, settings)
-            boundaries = chunk_boundaries(
-                transcript.segments, frames,
-                window_s=settings.chunk_window_s, duration_s=meta.duration_s,
-            )
+            # Danmaku gets its OWN fixed window cadence, decoupled from frame/transcript chunk
+            # boundaries: the crowd's pace has nothing to do with slide cuts, and aligning to
+            # frames would dump a static slide's minutes of danmaku into one giant window.
             danmaku = represent_danmaku(
-                canonical, fetch, settings, boundaries=boundaries,
-                duration_s=meta.duration_s, window_s=settings.chunk_window_s,
+                canonical, fetch, settings,
+                duration_s=meta.duration_s, window_s=settings.danmaku_window_s,
             )
 
     bundle = build_bundle(

@@ -17,6 +17,21 @@ def test_load_reads_harvest_env_keys(monkeypatch, tmp_path):
     assert s.out_dir == Path(tmp_path / "o")
 
 
+def test_chunk_window_s_default_is_60_for_minute_alignment():
+    # 60s (the fallback wall-clock chunk width when frames don't dictate boundaries) so frameless
+    # bundles bucket on clean minute marks — [0,60),[60,120)... — easier to reference by minute.
+    assert Settings().chunk_window_s == 60.0
+
+
+def test_danmaku_window_s_default_is_15_and_env_overridable(monkeypatch):
+    # 15s: the empirically-validated danmaku bucket width (one crowd "beat" per window),
+    # decoupled from the frame/transcript chunk cadence.
+    monkeypatch.delenv("HARVEST_DANMAKU_WINDOW_S", raising=False)
+    assert Settings.load().danmaku_window_s == 15.0
+    monkeypatch.setenv("HARVEST_DANMAKU_WINDOW_S", "20")
+    assert Settings.load().danmaku_window_s == 20.0
+
+
 def test_youtube_cookies_defaults_off(monkeypatch):
     monkeypatch.delenv("HARVEST_YT_COOKIES", raising=False)
     assert Settings.load().youtube_cookies is False

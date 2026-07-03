@@ -165,7 +165,7 @@ bilibili and finds nothing, `bundle.danmaku` is still populated (not null) with 
   "model": "qwen2.5-7b-instruct",    // the LLM that produced the mirror below; provenance
   "windows": [
     {
-      "start": 0.0, "end": 75.0,     // content-time window, ALIGNED to the bundle.md chunk boundaries
+      "start": 0.0, "end": 15.0,     // content-time window on danmaku's OWN fixed cadence (~15s)
       "total": 340,                  // raw danmaku count in this window, BEFORE clustering
       "lines": [ { "text": "草", "count": 12 }, { "text": "…", "count": 1 } ]
     }
@@ -173,8 +173,12 @@ bilibili and finds nothing, `bundle.danmaku` is still populated (not null) with 
 }
 ```
 
-Each `DanmakuWindow.start` coincides with a `## [mm:ss]` chunk mark in bundle.md, so a reader can
-cross-reference the crowd reaction against the transcript/frames at the same timestamp.
+`DanmakuWindow`s are fixed ~15s content-time buckets on danmaku's **own** cadence — deliberately
+finer than, and independent of, the transcript `## [mm:ss]` chunk marks (the crowd's pace tracks
+seconds, not slide cuts). To cross-reference a crowd reaction against the transcript/frames, compare
+the window's `[start, end)` seconds to the chunk timestamps; do not expect a window to coincide with
+a single chunk. Timing is deliberately vague (viewers react a few seconds late) — treat a window as
+"around this stretch," never as frame-accurate.
 
 **`Danmaku` is a fenced MIRROR, not interpreted content**: every `DanmakuLine.text` is verbatim —
 never paraphrased, translated, decoded, or labeled with sentiment/topic. Lines within a window are

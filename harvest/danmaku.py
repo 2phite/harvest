@@ -252,7 +252,7 @@ def represent_danmaku(
     fetch: DanmakuFetch,
     settings: Settings,
     *,
-    window_s: float = 75.0,
+    window_s: float = 15.0,
     duration_s: float | None = None,
     boundaries: list[float] | None = None,
     client=None,
@@ -261,10 +261,12 @@ def represent_danmaku(
     call -> reassemble. All-or-nothing stage cache keyed on identity + params + a fingerprint of
     the fetched danmaku (mirrors `cli.py::_caption`'s `frameset` fingerprint pattern).
 
-    `boundaries` lets a caller (Task 4) pass window starts aligned to the bundle's chunks; absent
-    that, fixed `window_s`-wide boundaries covering `duration_s` are derived. `client` is
-    injectable for offline testing (a stub with `.chat.completions.create(...)`); defaults to the
-    real LM Studio client via `vision._client(settings)`.
+    Danmaku is windowed on its own fixed `window_s` cadence (default 15s), deliberately decoupled
+    from the frame/transcript chunk boundaries — the crowd's pace is unrelated to slide cuts.
+    `boundaries` remains an escape hatch for a caller that wants explicit window starts; absent it
+    (the normal path), fixed `window_s`-wide boundaries covering `duration_s` are derived.
+    `client` is injectable for offline testing (a stub with `.chat.completions.create(...)`);
+    defaults to the real LM Studio client via `vision._client(settings)`.
     """
     model = settings.lmstudio_danmaku_model
     resolved_boundaries = (
