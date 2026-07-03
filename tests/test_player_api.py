@@ -1,7 +1,4 @@
-import gzip
 import json
-import zlib
-from pathlib import Path
 
 import pytest
 
@@ -16,10 +13,6 @@ from harvest.player_api import (
     select_zh_subtitle,
 )
 from harvest.resolve import Canonical
-
-_DANMAKU_FIXTURE = (
-    Path(__file__).parent / "fixtures" / "bilibili" / "sample_danmaku.xml"
-).read_bytes()
 
 
 def test_cid_for_part_matches_page_number():
@@ -444,67 +437,54 @@ def test_part_segments_accepts_prefetched_view_and_skips_fetch_view():
     assert opener.requested_urls == [player_url]
 
 
-# --- danmaku acquisition (Task 2) ---
+# --- danmaku acquisition (Task 1: census `seg.so`, protobuf) ---
 
 
-def _danmaku_url(cid: int) -> str:
-    from harvest.player_api import _API_DANMAKU_XML
+def _seg_url(cid: int, idx: int) -> str:
+    from harvest.player_api import _API_DANMAKU_SEG
 
-    return _API_DANMAKU_XML.format(cid=cid)
-
-
-def test_decode_plain_utf8_bytes():
-    from harvest.player_api import _decode
-
-    assert _decode(_DANMAKU_FIXTURE) == _DANMAKU_FIXTURE.decode("utf-8")
+    return _API_DANMAKU_SEG.format(cid=cid, idx=idx)
 
 
-def test_decode_gzip_bytes():
-    from harvest.player_api import _decode
-
-    body = gzip.compress(_DANMAKU_FIXTURE)
-    assert _decode(body) == _DANMAKU_FIXTURE.decode("utf-8")
+# --- minimal protobuf wire-format ENCODER (test-only; builds fake seg.so segment bodies) ---
 
 
-def test_decode_zlib_wrapped_bytes():
-    from harvest.player_api import _decode
-
-    body = zlib.compress(_DANMAKU_FIXTURE)
-    assert _decode(body) == _DANMAKU_FIXTURE.decode("utf-8")
-
-
-def test_decode_raw_deflate_bytes():
-    from harvest.player_api import _decode
-
-    co = zlib.compressobj(wbits=-zlib.MAX_WBITS)
-    body = co.compress(_DANMAKU_FIXTURE) + co.flush()
-    assert _decode(body) == _DANMAKU_FIXTURE.decode("utf-8")
+def _encode_varint(n: int) -> bytes:
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        if n:
+            out.append(b | 0x80)
+        else:
+            out.append(b)
+            return bytes(out)
 
 
-def test_decode_raises_on_unrecognized_bytes():
-    from harvest.player_api import _decode
-
-    with pytest.raises(ValueError):
-        _decode(b"\xff\xfe\x00\x01not text or a known codec")
+def _encode_tag(field: int, wiretype: int) -> bytes:
+    return _encode_varint((field << 3) | wiretype)
 
 
-def test_parse_danmaku_xml_sorts_and_skips_malformed():
-    from harvest.player_api import RawDanmaku, _parse_danmaku_xml
-
-    records = _parse_danmaku_xml(_DANMAKU_FIXTURE.decode("utf-8"))
-
-    # malformed <d p="1,2"> (too few comma fields) is skipped -> 5 of 6 survive
-    assert len(records) == 5
-    assert all(isinstance(r, RawDanmaku) for r in records)
-    # sorted ascending by content_ts (fixture has 12.5 listed before 3.2)
-    assert [r.content_ts for r in records] == [3.2, 3.2, 8.0, 8.0, 12.5]
-    # only content_ts + text retained; duplicate/near-duplicate content preserved verbatim
-    assert records[0].text == "弹幕测试"
-    assert records[1].text == "弹幕测试"
-    assert records[-1].text == "你好世界"
+def _encode_elem(*, progress_ms: int, content: str, attr: int = 0) -> bytes:
+    buf = bytearray()
+    buf += _encode_tag(2, 0) + _encode_varint(progress_ms)
+    data = content.encode("utf-8")
+    buf += _encode_tag(7, 2) + _encode_varint(len(data)) + data
+    if attr:
+        buf += _encode_tag(13, 0) + _encode_varint(attr)
+    return bytes(buf)
 
 
-def test_fetch_danmaku_parses_records_and_source_total():
+def _encode_seg(elems: list[tuple[int, str, int]]) -> bytes:
+    """Build a fake `DmSegMobileReply` body from `(progress_ms, content, attr)` tuples."""
+    out = bytearray()
+    for ms, text, attr in elems:
+        body = _encode_elem(progress_ms=ms, content=text, attr=attr)
+        out += _encode_tag(1, 2) + _encode_varint(len(body)) + body
+    return bytes(out)
+
+
+def test_fetch_danmaku_pages_segments_until_empty_and_orders_chronologically():
     from harvest.player_api import fetch_danmaku
 
     canonical = _canonical(part=1)
@@ -513,26 +493,34 @@ def test_fetch_danmaku_parses_records_and_source_total():
         "data": {
             "aid": 42, "cid": 100, "title": "T", "desc": "d", "duration": 600,
             "owner": {"mid": 7, "name": "U"},
-            "stat": {"danmaku": 9999},
+            "stat": {"danmaku": 4},
             "pages": [{"page": 1, "cid": 100, "part": "P1", "duration": 600}],
         },
     }
+    seg1 = _encode_seg([(3000, "second", 4), (1000, "first", 0)])  # unordered within segment
+    seg2 = _encode_seg([(5000, "third", 0)])
     opener = _FakeOpener({
         _view_url(canonical): view_payload,
-        _danmaku_url(100): _DANMAKU_FIXTURE,
+        _seg_url(100, 1): seg1,
+        _seg_url(100, 2): seg2,
+        _seg_url(100, 3): b"",  # empty segment -> terminates pagination
     })
 
     result = fetch_danmaku(canonical, Settings(), opener=opener)
 
-    assert result.source_total == 9999
-    assert result.fetched_total == 5
-    assert len(result.records) == 5
-    assert [r.content_ts for r in result.records] == [3.2, 3.2, 8.0, 8.0, 12.5]
-    # 5 fetched vs a much larger platform-reported total -> sampled
-    assert result.sampled is True
+    assert result.source_total == 4
+    assert result.fetched_total == 3
+    # sorted ascending by content_ts regardless of within-segment/across-segment arrival order
+    assert [r.text for r in result.records] == ["first", "second", "third"]
+    assert [r.content_ts for r in result.records] == [1.0, 3.0, 5.0]
+    assert result.records[0].high_like is False
+    assert result.records[1].high_like is True  # attr=4 -> HighLike bit2
+    assert opener.requested_urls == [
+        _view_url(canonical), _seg_url(100, 1), _seg_url(100, 2), _seg_url(100, 3),
+    ]
 
 
-def test_fetch_danmaku_not_sampled_when_fetched_meets_source_total():
+def test_fetch_danmaku_terminates_on_non_protobuf_json_error_body():
     from harvest.player_api import fetch_danmaku
 
     canonical = _canonical(part=1)
@@ -540,20 +528,58 @@ def test_fetch_danmaku_not_sampled_when_fetched_meets_source_total():
         "code": 0,
         "data": {
             "aid": 42, "cid": 100, "title": "T", "desc": "d", "duration": 600,
-            "owner": {"mid": 7, "name": "U"},
-            "stat": {"danmaku": 5},
+            "owner": {"mid": 7, "name": "U"}, "stat": {"danmaku": 1},
             "pages": [{"page": 1, "cid": 100, "part": "P1", "duration": 600}],
         },
     }
+    seg1 = _encode_seg([(1000, "only", 0)])
     opener = _FakeOpener({
         _view_url(canonical): view_payload,
-        _danmaku_url(100): _DANMAKU_FIXTURE,
+        _seg_url(100, 1): seg1,
+        _seg_url(100, 2): b'{"code":-352,"message":"risk control"}',
     })
 
     result = fetch_danmaku(canonical, Settings(), opener=opener)
-    assert result.fetched_total == 5
-    assert result.source_total == 5
-    assert result.sampled is False
+
+    assert result.fetched_total == 1
+    assert result.records[0].text == "only"
+
+
+def test_fetch_danmaku_partial_on_mid_pagination_error(caplog):
+    """A URLError partway through pagination keeps what was already gathered, logs a warning,
+    and does not raise (mirrors part_segments's "absence degrades gracefully" stance)."""
+    import logging
+    from urllib.error import URLError
+
+    from harvest.player_api import fetch_danmaku
+
+    canonical = _canonical(part=1)
+    view_payload = {
+        "code": 0,
+        "data": {
+            "aid": 42, "cid": 100, "title": "T", "desc": "d", "duration": 600,
+            "owner": {"mid": 7, "name": "U"}, "stat": {"danmaku": 2},
+            "pages": [{"page": 1, "cid": 100, "part": "P1", "duration": 600}],
+        },
+    }
+    seg1 = _encode_seg([(1000, "first", 0)])
+
+    class _ErroringOpener(_FakeOpener):
+        def open(self, url: str, timeout: int = 60):
+            if url == _seg_url(100, 2):
+                self.requested_urls.append(url)
+                raise URLError("boom")
+            return super().open(url, timeout)
+
+    opener = _ErroringOpener({_view_url(canonical): view_payload, _seg_url(100, 1): seg1})
+
+    with caplog.at_level(logging.WARNING):
+        result = fetch_danmaku(canonical, Settings(), opener=opener)
+
+    assert result.fetched_total == 1
+    assert result.records[0].text == "first"
+    assert result.source_total == 2
+    assert any("danmaku" in rec.message.lower() for rec in caplog.records)
 
 
 def test_fetch_danmaku_accepts_prefetched_view_and_skips_view_get():
@@ -562,14 +588,15 @@ def test_fetch_danmaku_accepts_prefetched_view_and_skips_view_get():
 
     canonical = _canonical(part=1)
     view = ViewData(aid=42, cid=100, danmaku_count=5, pages=[ViewPage(part=1, cid=100)])
-    opener = _FakeOpener({_danmaku_url(100): _DANMAKU_FIXTURE})
+    seg1 = _encode_seg([(1000, "a", 0)])
+    opener = _FakeOpener({_seg_url(100, 1): seg1, _seg_url(100, 2): b""})
 
     result = fetch_danmaku(canonical, Settings(), opener=opener, view=view)
 
     assert _view_url(canonical) not in opener.requested_urls
-    assert opener.requested_urls == [_danmaku_url(100)]
+    assert opener.requested_urls == [_seg_url(100, 1), _seg_url(100, 2)]
     assert result.source_total == 5
-    assert result.fetched_total == 5
+    assert result.fetched_total == 1
 
 
 def test_fetch_danmaku_no_cid_returns_empty_result_not_raise():
@@ -583,7 +610,6 @@ def test_fetch_danmaku_no_cid_returns_empty_result_not_raise():
 
     assert result.records == []
     assert result.fetched_total == 0
-    assert result.sampled is False
     assert result.source_total == 5
     assert opener.requested_urls == []
 
@@ -599,5 +625,47 @@ def test_fetch_danmaku_view_error_returns_empty_result_not_raise():
     assert result.records == []
     assert result.fetched_total == 0
     assert result.source_total is None
-    assert result.sampled is False
+
+
+@pytest.mark.live
+def test_live_fetch_danmaku_census_does_not_truncate_multi_segment_video():
+    """Real network + cookies: a long (>360s, i.e. multi-segment) public bilibili video. Each
+    `seg.so` segment spans ~360s of content-time, so the pagination loop should walk roughly
+    `ceil(duration_s / 360)` non-empty segments before hitting the terminating empty one -- if
+    the loop's termination condition were wrong (e.g. treating a transient empty/short segment
+    as final), `segments_fetched` would fall short of that. Excluded by default
+    (-m 'not live'); run explicitly with `-m live` against a real, sufficiently long video."""
+    import math
+
+    from harvest.player_api import _opener, fetch_danmaku
+    from harvest.resolve import resolve
+
+    settings = Settings.load()
+    # A long-form upload -- swap for any known multi-segment (>360s) public BV if this one
+    # disappears/changes.
+    canonical = resolve("https://www.bilibili.com/video/BV11Kc2zZEUr")
+    real_opener = _opener(settings)
+    seg_requests: list[str] = []
+
+    class _CountingOpener:
+        def open(self, url: str, timeout: int = 60):
+            if "seg.so" in url:
+                seg_requests.append(url)
+            return real_opener.open(url, timeout=timeout)
+
+    counting = _CountingOpener()
+    view = fetch_view(canonical, settings, opener=counting)
+    assert view.duration and view.duration > 360, (
+        "fixture video must be multi-segment (duration_s > 360) for this check to be meaningful"
+    )
+
+    result = fetch_danmaku(canonical, settings, opener=counting, view=view)
+
+    expected_segments = math.ceil(view.duration / 360)
+    segments_fetched = len(seg_requests) - 1  # last request is the empty pagination-terminator
+    assert segments_fetched >= expected_segments, (
+        f"pagination stopped after {segments_fetched} segments but a {view.duration}s video "
+        f"should span >= {expected_segments} -- termination condition may be truncating early"
+    )
+    assert result.fetched_total > 0
 

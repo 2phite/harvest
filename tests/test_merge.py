@@ -425,7 +425,7 @@ def test_render_markdown_omits_danmaku_section_when_none():
 
 def test_render_markdown_omits_danmaku_section_when_no_windows():
     bundle = _bundle_with_danmaku(
-        Danmaku(source_total=0, fetched_total=0, sampled=False, model=None, windows=[])
+        Danmaku(source_total=0, fetched_total=0, model=None, windows=[])
     )
     md = render_markdown(bundle, _settings())
     assert "## Danmaku" not in md
@@ -435,7 +435,6 @@ def test_render_markdown_emits_danmaku_section_with_provenance_and_counts():
     dm = Danmaku(
         source_total=100,
         fetched_total=80,
-        sampled=True,
         model="qwen-test",
         windows=[
             DanmakuWindow(
@@ -451,11 +450,10 @@ def test_render_markdown_emits_danmaku_section_with_provenance_and_counts():
     md = render_markdown(bundle, _settings())
 
     assert "## Danmaku" in md
-    # Provenance line conveys: lower authority, fetched/source totals, sampled, model.
+    # Provenance line conveys: lower authority, fetched/source totals, model.
     assert "lower authority than transcript" in md
     assert "fetched 80" in md
     assert "of 100" in md
-    assert "sampled" in md
     assert "qwen-test" in md
     # Per-window header uses mm:ss + total (raw, pre-clustering) count.
     assert "### [00:00] (5 danmaku)" in md
@@ -468,7 +466,7 @@ def test_render_markdown_emits_danmaku_section_with_provenance_and_counts():
 def test_render_markdown_danmaku_caps_lines_with_overflow_marker():
     lines = [DanmakuLine(text=f"line{i}", count=1) for i in range(DANMAKU_MD_CAP + 7)]
     dm = Danmaku(
-        source_total=None, fetched_total=len(lines), sampled=False, model=None,
+        source_total=None, fetched_total=len(lines), model=None,
         windows=[DanmakuWindow(start=0.0, end=75.0, total=len(lines), lines=lines)],
     )
     bundle = _bundle_with_danmaku(dm)
@@ -484,7 +482,7 @@ def test_render_markdown_danmaku_caps_lines_with_overflow_marker():
 def test_render_markdown_danmaku_under_cap_has_no_overflow_marker():
     lines = [DanmakuLine(text=f"line{i}", count=1) for i in range(3)]
     dm = Danmaku(
-        source_total=None, fetched_total=3, sampled=False, model=None,
+        source_total=None, fetched_total=3, model=None,
         windows=[DanmakuWindow(start=0.0, end=75.0, total=3, lines=lines)],
     )
     bundle = _bundle_with_danmaku(dm)
@@ -495,7 +493,7 @@ def test_render_markdown_danmaku_under_cap_has_no_overflow_marker():
 def test_bundle_json_roundtrip_carries_complete_uncapped_danmaku(tmp_path):
     lines = [DanmakuLine(text=f"line{i}", count=1) for i in range(DANMAKU_MD_CAP + 10)]
     dm = Danmaku(
-        source_total=200, fetched_total=len(lines), sampled=True, model="m1",
+        source_total=200, fetched_total=len(lines), model="m1",
         windows=[DanmakuWindow(start=0.0, end=75.0, total=len(lines), lines=lines)],
     )
     bundle = _bundle_with_danmaku(dm)
@@ -510,7 +508,6 @@ def test_bundle_json_roundtrip_carries_complete_uncapped_danmaku(tmp_path):
     roundtripped = Bundle.model_validate_json((out / "bundle.json").read_text(encoding="utf-8"))
     assert len(roundtripped.danmaku.windows[0].lines) == DANMAKU_MD_CAP + 10
     assert roundtripped.danmaku.source_total == 200
-    assert roundtripped.danmaku.sampled is True
     assert roundtripped.danmaku.model == "m1"
 
     md = (out / "bundle.md").read_text(encoding="utf-8")

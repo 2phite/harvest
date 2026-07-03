@@ -125,7 +125,7 @@ def test_fetch_danmaku_delegates_to_player_api(monkeypatch):
 
     p = BilibiliProvider()
     canonical = _canonical()
-    sentinel = DanmakuFetch(source_total=5, fetched_total=5, sampled=False, records=[])
+    sentinel = DanmakuFetch(source_total=5, fetched_total=5, records=[])
     captured = {}
 
     def _fake_fetch_danmaku(c, s, *, opener=None, view=None):

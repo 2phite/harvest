@@ -433,7 +433,7 @@ def test_process_part_danmaku_uses_fixed_danmaku_window_not_frame_boundaries(mon
                           uploader_id=None, description=None, duration_s=100,
                           published_at=None, parts=1, part_durations_s=[100])
     fetch_sentinel = object()
-    danmaku_result = Danmaku(source_total=10, fetched_total=10, sampled=False, windows=[])
+    danmaku_result = Danmaku(source_total=10, fetched_total=10, windows=[])
 
     class _FakeBili:
         def fetch_metadata(self, c, settings):

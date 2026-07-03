@@ -131,8 +131,7 @@ class Danmaku(BaseModel):
     bundle.md may cap per window with a '+N more' marker (read this JSON for the full set)."""
 
     source_total: int | None = None  # platform-reported total (stat.danmaku)
-    fetched_total: int  # how many actually pulled (endpoint may sample)
-    sampled: bool  # fetched_total < source_total -> a sample, not a census
+    fetched_total: int  # how many actually pulled (census, deletion gap possible)
     model: str | None = None  # the LLM that produced this representation (provenance)
     windows: list[DanmakuWindow] = Field(default_factory=list)
 

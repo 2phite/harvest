@@ -158,8 +158,6 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
         note = f"_crowd track (lower authority than transcript) — fetched {dm.fetched_total}"
         if dm.source_total is not None:
             note += f" of {dm.source_total}"
-        if dm.sampled:
-            note += " (sampled)"
         if dm.model:
             note += f" · {dm.model}"
         note += "_"

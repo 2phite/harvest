@@ -226,7 +226,7 @@ def test_represent_danmaku_orders_lines_chronologically_not_count_descending(tmp
         _rd(2.5, "second thought"),
         _rd(2.6, "second thought"),
     ]
-    fetch = DanmakuFetch(source_total=4, fetched_total=4, sampled=False, records=records)
+    fetch = DanmakuFetch(source_total=4, fetched_total=4, records=records)
     # The stub deliberately returns clusters in a NON-chronological (count-descending) order --
     # "second thought" (count 3) FIRST, "first thought" (count 1) SECOND -- exactly the ordering
     # bug the probe found (SPEC-locked: count-sort destroys the temporal signal). The prompt asks
@@ -253,7 +253,6 @@ def test_represent_danmaku_orders_lines_chronologically_not_count_descending(tmp
     assert result.windows[0].total == 4
     assert result.source_total == 4
     assert result.fetched_total == 4
-    assert result.sampled is False
     assert result.model == "stub-model"
     assert len(client.chat.completions.calls) == 1
 
@@ -267,7 +266,7 @@ def test_represent_danmaku_reorders_unmatched_representative_after_matched_ones(
         _rd(1.0, "alpha"),
         _rd(2.0, "beta"),
     ]
-    fetch = DanmakuFetch(source_total=2, fetched_total=2, sampled=False, records=records)
+    fetch = DanmakuFetch(source_total=2, fetched_total=2, records=records)
     resp = json.dumps([
         {"text": "not verbatim", "count": 1},
         {"text": "beta", "count": 1},
@@ -286,7 +285,7 @@ def test_represent_danmaku_reorders_unmatched_representative_after_matched_ones(
 
 def test_represent_danmaku_cache_hit_skips_llm_call(tmp_path):
     records = [_rd(1.0, "hi")]
-    fetch = DanmakuFetch(source_total=1, fetched_total=1, sampled=False, records=records)
+    fetch = DanmakuFetch(source_total=1, fetched_total=1, records=records)
     resp = json.dumps([{"text": "hi", "count": 1}])
     settings = _settings(tmp_path)
 
@@ -308,7 +307,7 @@ def test_represent_danmaku_different_fetched_danmaku_invalidates_cache(tmp_path)
     settings = _settings(tmp_path)
     resp1 = json.dumps([{"text": "hi", "count": 1}])
     fetch1 = DanmakuFetch(
-        source_total=1, fetched_total=1, sampled=False, records=[_rd(1.0, "hi")]
+        source_total=1, fetched_total=1, records=[_rd(1.0, "hi")]
     )
     client1 = _StubClient([resp1])
     represent_danmaku(
@@ -317,7 +316,7 @@ def test_represent_danmaku_different_fetched_danmaku_invalidates_cache(tmp_path)
 
     resp2 = json.dumps([{"text": "bye", "count": 1}])
     fetch2 = DanmakuFetch(
-        source_total=1, fetched_total=1, sampled=False, records=[_rd(1.0, "bye")]
+        source_total=1, fetched_total=1, records=[_rd(1.0, "bye")]
     )
     client2 = _StubClient([resp2])
     second = represent_danmaku(
@@ -331,7 +330,7 @@ def test_represent_danmaku_different_fetched_danmaku_invalidates_cache(tmp_path)
 def test_represent_danmaku_omits_empty_windows(tmp_path):
     settings = _settings(tmp_path)
     records = [_rd(80.0, "only here")]
-    fetch = DanmakuFetch(source_total=1, fetched_total=1, sampled=False, records=records)
+    fetch = DanmakuFetch(source_total=1, fetched_total=1, records=records)
     resp = json.dumps([{"text": "only here", "count": 1}])
     client = _StubClient([resp])
 
@@ -345,7 +344,7 @@ def test_represent_danmaku_omits_empty_windows(tmp_path):
 
 def test_represent_danmaku_no_records_produces_no_windows_and_no_llm_call(tmp_path):
     settings = _settings(tmp_path)
-    fetch = DanmakuFetch(source_total=0, fetched_total=0, sampled=False, records=[])
+    fetch = DanmakuFetch(source_total=0, fetched_total=0, records=[])
     client = _StubClient([])
 
     result = represent_danmaku(
@@ -360,7 +359,7 @@ def test_represent_danmaku_batches_large_windows_and_merges_results(tmp_path, mo
 
     monkeypatch.setattr(dm, "_BATCH_CAP", 2)
     records = [_rd(float(i), f"msg{i}") for i in range(5)]  # 5 distinct entries, cap=2 -> 3 batches
-    fetch = DanmakuFetch(source_total=5, fetched_total=5, sampled=False, records=records)
+    fetch = DanmakuFetch(source_total=5, fetched_total=5, records=records)
     settings = _settings(tmp_path)
 
     responses = [
@@ -387,7 +386,7 @@ def test_represent_danmaku_default_boundaries_windows_via_window_s(tmp_path):
         _rd(80.0, "late one"),
         _rd(81.0, "late two"),
     ]
-    fetch = DanmakuFetch(source_total=3, fetched_total=3, sampled=False, records=records)
+    fetch = DanmakuFetch(source_total=3, fetched_total=3, records=records)
     settings = _settings(tmp_path)
     resp1 = json.dumps([{"text": "early one", "count": 1}])
     resp2 = json.dumps([
@@ -434,7 +433,7 @@ def test_live_danmaku_smoke():
         _rd(2.0, "哈哈哈哈哈"),
         _rd(3.0, "666"),
     ]
-    fetch = DanmakuFetch(source_total=4, fetched_total=4, sampled=False, records=records)
+    fetch = DanmakuFetch(source_total=4, fetched_total=4, records=records)
     result = represent_danmaku(_canonical(), fetch, settings, boundaries=[0.0], duration_s=10.0)
 
     assert result.windows

@@ -307,7 +307,6 @@ def represent_danmaku(
     result = Danmaku(
         source_total=fetch.source_total,
         fetched_total=fetch.fetched_total,
-        sampled=fetch.sampled,
         model=model,
         windows=windows,
     )
