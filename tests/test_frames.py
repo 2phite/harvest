@@ -1,4 +1,8 @@
+import types
+
+from harvest.config import Settings
 from harvest.frames import dedup_phashes, hamming
+from harvest.providers.base import Canonical
 
 
 def test_hamming_identical_is_zero():
@@ -47,3 +51,70 @@ def test_dedup_compares_against_last_kept_not_last_seen():
 
 def test_dedup_empty():
     assert dedup_phashes([], threshold=5) == []
+
+
+# --- issue #9: video download must not hand YouTube to aria2c (same class as #3) ---------------
+
+
+class _FakeYDL:
+    """Records the opts it was constructed with and writes the target file on extract_info."""
+
+    captured: dict = {}
+
+    def __init__(self, opts):
+        _FakeYDL.captured = opts
+        self._info = opts.pop("_test_info", {})
+        self._writes = opts.pop("_test_writes", None)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def extract_info(self, url, download):
+        if self._writes is not None:
+            self._writes()
+        return self._info
+
+
+def _fake_ydl_factory(monkeypatch, info, writes=None):
+    from harvest import frames as F
+
+    def make(opts):
+        opts["_test_info"] = info
+        opts["_test_writes"] = writes
+        return _FakeYDL(opts)
+
+    monkeypatch.setattr(F, "yt_dlp", types.SimpleNamespace(YoutubeDL=make))
+
+
+def _prep(tmp_path, key):
+    vdir = tmp_path / "video"
+    vdir.mkdir(parents=True)
+    return vdir / f"{key}.mp4"
+
+
+def test_download_video_youtube_uses_native_downloader(tmp_path, monkeypatch):
+    from harvest import frames as F
+
+    s = Settings(cache_dir=tmp_path, aria2c_path="C:/aria2c.exe")
+    target = _prep(tmp_path, "youtube.com_F8X9_Dp3ZUk_1")
+    canon = Canonical("youtube.com", "F8X9_Dp3ZUk", 1,
+                      "https://www.youtube.com/watch?v=F8X9_Dp3ZUk")
+    info = {"requested_downloads": [{"filepath": str(target)}]}
+    _fake_ydl_factory(monkeypatch, info, lambda: target.write_bytes(b"x"))
+    F.download_video(canon, s)
+    assert "external_downloader" not in _FakeYDL.captured
+
+
+def test_download_video_bilibili_keeps_aria2c(tmp_path, monkeypatch):
+    from harvest import frames as F
+
+    s = Settings(cache_dir=tmp_path, aria2c_path="C:/aria2c.exe")
+    target = _prep(tmp_path, "bilibili.com_BV1_1")
+    canon = Canonical("bilibili.com", "BV1", 1, "https://www.bilibili.com/video/BV1")
+    info = {"requested_downloads": [{"filepath": str(target)}]}
+    _fake_ydl_factory(monkeypatch, info, lambda: target.write_bytes(b"x"))
+    F.download_video(canon, s)
+    assert _FakeYDL.captured["external_downloader"] == {"default": "C:/aria2c.exe"}
