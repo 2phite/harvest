@@ -22,8 +22,8 @@ def _canonical():
     return Canonical(platform="bilibili.com", id="BV1", part=1, url="https://b/video/BV1")
 
 
-def _rd(ts, text):
-    return RawDanmaku(content_ts=ts, text=text)
+def _rd(ts, text, high_like=False):
+    return RawDanmaku(content_ts=ts, text=text, high_like=high_like)
 
 
 # ---------------------------------------------------------------------------
@@ -34,14 +34,14 @@ def _rd(ts, text):
 def test_exact_dedup_collapses_byte_identical_and_sums_counts():
     records = [_rd(1.0, "hello"), _rd(2.0, "hello"), _rd(3.0, "world")]
     out = _exact_dedup(records)
-    assert out == [("hello", 2), ("world", 1)]
+    assert out == [("hello", 2, 1.0), ("world", 1, 3.0)]
 
 
 def test_exact_dedup_preserves_first_occurrence_chronological_order():
     records = [_rd(1.0, "b"), _rd(2.0, "a"), _rd(3.0, "b"), _rd(4.0, "a")]
     out = _exact_dedup(records)
-    assert [t for t, _ in out] == ["b", "a"]
-    assert out == [("b", 2), ("a", 2)]
+    assert [t for t, _, _ in out] == ["b", "a"]
+    assert out == [("b", 2, 1.0), ("a", 2, 2.0)]
 
 
 def test_exact_dedup_empty_input():
@@ -156,18 +156,21 @@ def test_parse_response_degrades_gracefully_on_trailing_bracket_prose():
 
 def test_merge_lines_combines_identical_representative_text_summing_counts():
     lines = [
-        DanmakuLine(text="a", count=2),
-        DanmakuLine(text="b", count=1),
-        DanmakuLine(text="a", count=3),
+        (DanmakuLine(text="a", count=2), 1.0),
+        (DanmakuLine(text="b", count=1), 2.0),
+        (DanmakuLine(text="a", count=3), 3.0),
     ]
     merged = _merge_lines(lines)
-    assert merged == [DanmakuLine(text="a", count=5), DanmakuLine(text="b", count=1)]
+    assert merged == [
+        (DanmakuLine(text="a", count=5), 1.0),
+        (DanmakuLine(text="b", count=1), 2.0),
+    ]
 
 
 def test_merge_lines_preserves_first_occurrence_order():
-    lines = [DanmakuLine(text="z", count=1), DanmakuLine(text="a", count=1)]
+    lines = [(DanmakuLine(text="z", count=1), 5.0), (DanmakuLine(text="a", count=1), 6.0)]
     merged = _merge_lines(lines)
-    assert [l.text for l in merged] == ["z", "a"]
+    assert [l.text for l, _ts in merged] == ["z", "a"]
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +411,140 @@ def test_represent_danmaku_default_boundaries_windows_via_window_s(tmp_path):
     assert result.source_total == 3
     assert result.fetched_total == 3
     assert result.model == "stub-model"
+
+
+def test_danmaku_line_high_like_defaults_false():
+    line = DanmakuLine(text="x", count=1)
+    assert line.high_like is False
+    promoted = DanmakuLine(text="x", count=1, high_like=True)
+    assert promoted.high_like is True
+
+
+def test_represent_danmaku_extracts_high_like_verbatim_before_clustering(tmp_path):
+    # A promoted (high_like) danmaku whose text is byte-identical to an ordinary flood must
+    # still appear as its OWN high_like=True line -- the flood clusters separately from it, and
+    # the LLM never sees the promoted copy (extract-before-cluster).
+    records = [
+        _rd(1.0, "same text", high_like=True),
+        _rd(2.0, "same text"),
+        _rd(2.5, "same text"),
+    ]
+    fetch = DanmakuFetch(source_total=3, fetched_total=3, records=records)
+    resp = json.dumps([{"text": "same text", "count": 2}])
+    client = _StubClient([resp])
+    settings = _settings(tmp_path)
+
+    result = represent_danmaku(
+        _canonical(), fetch, settings, boundaries=[0.0], duration_s=10.0, client=client
+    )
+
+    lines = result.windows[0].lines
+    assert len(lines) == 2
+    promoted_lines = [l for l in lines if l.high_like]
+    ordinary_lines = [l for l in lines if not l.high_like]
+    assert [l.text for l in promoted_lines] == ["same text"]
+    assert [l.count for l in promoted_lines] == [1]
+    assert [l.text for l in ordinary_lines] == ["same text"]
+    assert [l.count for l in ordinary_lines] == [2]
+    assert result.windows[0].total == 3
+    # The LLM only ever saw the ordinary flood (2), never the promoted copy.
+    call_content = client.chat.completions.calls[0]["messages"][0]["content"]
+    call_payload = json.loads(call_content.split("Input:\n", 1)[1])
+    assert call_payload == [{"text": "same text", "count": 2}]
+
+
+def test_represent_danmaku_three_way_chronological_interleave(tmp_path):
+    # promoted, clustered, and singleton lines must merge-sort by first-occurrence content_ts,
+    # not by category or by the LLM's returned order.
+    records = [
+        _rd(1.0, "alpha"),  # ordinary singleton, ts=1.0
+        _rd(2.0, "promoted one", high_like=True),  # promoted, ts=2.0
+        _rd(3.0, "beta"),  # ordinary, part of flood
+        _rd(3.5, "beta"),
+        _rd(5.0, "gamma"),  # ordinary singleton, ts=5.0
+    ]
+    fetch = DanmakuFetch(source_total=5, fetched_total=5, records=records)
+    # Stub deliberately returns clusters in a scrambled order to prove mechanical reordering.
+    resp = json.dumps([
+        {"text": "beta", "count": 2},
+        {"text": "alpha", "count": 1},
+        {"text": "gamma", "count": 1},
+    ])
+    client = _StubClient([resp])
+    settings = _settings(tmp_path)
+
+    result = represent_danmaku(
+        _canonical(), fetch, settings, boundaries=[0.0], duration_s=10.0, client=client
+    )
+
+    lines = result.windows[0].lines
+    assert [(l.text, l.high_like) for l in lines] == [
+        ("alpha", False),
+        ("promoted one", True),
+        ("beta", False),
+        ("gamma", False),
+    ]
+    assert result.windows[0].total == 5
+
+
+def test_represent_danmaku_llm_payload_has_no_high_like_or_metadata_keys(tmp_path):
+    records = [
+        _rd(1.0, "promoted", high_like=True),
+        _rd(2.0, "ordinary"),
+    ]
+    fetch = DanmakuFetch(source_total=2, fetched_total=2, records=records)
+    resp = json.dumps([{"text": "ordinary", "count": 1}])
+    client = _StubClient([resp])
+    settings = _settings(tmp_path)
+
+    represent_danmaku(
+        _canonical(), fetch, settings, boundaries=[0.0], duration_s=10.0, client=client
+    )
+
+    assert len(client.chat.completions.calls) == 1
+    content = client.chat.completions.calls[0]["messages"][0]["content"]
+    payload_json = content.split("Input:\n", 1)[1]
+    payload = json.loads(payload_json)
+    for item in payload:
+        assert set(item.keys()) == {"text", "count"}
+        assert "high_like" not in item
+        assert "content_ts" not in item
+
+
+def test_fingerprint_differs_when_only_high_like_flag_differs(tmp_path):
+    from harvest.danmaku import _fingerprint
+
+    fetch_a = DanmakuFetch(
+        source_total=1, fetched_total=1, records=[_rd(1.0, "hi", high_like=False)]
+    )
+    fetch_b = DanmakuFetch(
+        source_total=1, fetched_total=1, records=[_rd(1.0, "hi", high_like=True)]
+    )
+    assert _fingerprint(fetch_a) != _fingerprint(fetch_b)
+
+
+def test_represent_danmaku_cache_restages_when_high_like_flag_changes(tmp_path):
+    settings = _settings(tmp_path)
+    resp1 = json.dumps([{"text": "hi", "count": 1}])
+    fetch1 = DanmakuFetch(
+        source_total=1, fetched_total=1, records=[_rd(1.0, "hi", high_like=False)]
+    )
+    client1 = _StubClient([resp1])
+    first = represent_danmaku(
+        _canonical(), fetch1, settings, boundaries=[0.0], duration_s=10.0, client=client1
+    )
+    assert not first.windows[0].lines[0].high_like
+
+    resp2 = json.dumps([{"text": "hi", "count": 0}])  # ordinary side sees nothing now
+    fetch2 = DanmakuFetch(
+        source_total=1, fetched_total=1, records=[_rd(1.0, "hi", high_like=True)]
+    )
+    client2 = _StubClient([])  # promoted-only window -> no LLM call needed
+    second = represent_danmaku(
+        _canonical(), fetch2, settings, boundaries=[0.0], duration_s=10.0, client=client2
+    )
+    assert second.windows[0].lines[0].high_like
+    assert second.windows[0].lines[0].count == 1
 
 
 def test_represent_danmaku_prompt_forbids_gaps_section_and_count_descending():

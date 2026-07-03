@@ -110,6 +110,8 @@ class DanmakuLine(BaseModel):
 
     text: str
     count: int = 1
+    high_like: bool = False  # bilibili 高赞 / platform-promoted -- extracted verbatim BEFORE
+    # clustering (never absorbed into a flood's count), never LLM-decided (Task 2)
 
 
 class DanmakuWindow(BaseModel):

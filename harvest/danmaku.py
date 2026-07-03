@@ -3,12 +3,16 @@ faithful `Danmaku` mirror via a tightly-fenced LLM call (SPEC danmaku build, Tas
 
 This is the ONE place in `harvest` an LLM produces output. The fence is the whole point: mirror,
 never decode/translate/sentiment/topic-label; every quoted string is verbatim; lines within a
-window are ordered CHRONOLOGICALLY by content time (never by count). The pipeline is:
+window are ordered CHRONOLOGICALLY by content time (never by count). A `high_like` (bilibili
+高赞 / platform-promoted) danmaku is extracted verbatim BEFORE clustering, entirely mechanically
+-- the LLM never sees it and never decides promotion. The pipeline is:
 
     raw records --[window by content-time]--> per-window records
-               --[exact-dedup, deterministic, no LLM]--> (text, count) entries
-               --[fenced LLM cluster call, batched]--> DanmakuLine clusters
-               --[reassemble]--> DanmakuWindow -> Danmaku
+               --[partition]--> high_like records | ordinary records
+    ordinary   --[exact-dedup, deterministic, no LLM]--> (text, count, content_ts) entries
+               --[fenced LLM cluster call, batched: {text,count} only]--> DanmakuLine clusters
+    high_like  --[exact-dedup, deterministic, no LLM]--> DanmakuLine(high_like=True) singletons
+               --[merge-sort both by first-occurrence content_ts]--> DanmakuWindow -> Danmaku
 
 Structured like `harvest/vision.py`: reuses its `_client(settings)` (OpenAI-compatible LM Studio
 endpoint), follows `cli.py::_caption`'s all-or-nothing stage-cache pattern, and follows
@@ -68,17 +72,22 @@ DANMAKU_PROMPT = (
 # ---------------------------------------------------------------------------
 
 
-def _exact_dedup(records: list[RawDanmaku]) -> list[tuple[str, int]]:
-    """Collapse byte-identical `text` into `(text, count)`, preserving first-occurrence
-    chronological order (`records` is assumed already content_ts-sorted, per `fetch_danmaku`)."""
+def _exact_dedup(records: list[RawDanmaku]) -> list[tuple[str, int, float]]:
+    """Collapse byte-identical `text` into `(text, count, first_occurrence_content_ts)`,
+    preserving first-occurrence chronological order (`records` is assumed already
+    content_ts-sorted, per `fetch_danmaku`). Used for BOTH the ordinary flood (feeds the LLM
+    clusterer) and the high_like extraction path (collapsed mechanically, no LLM) -- each entry's
+    `content_ts` is the merge-sort key that reassembles a window's final chronological order."""
     counts: dict[str, int] = {}
+    first_ts: dict[str, float] = {}
     order: list[str] = []
     for r in records:
         if r.text not in counts:
             counts[r.text] = 0
+            first_ts[r.text] = r.content_ts
             order.append(r.text)
         counts[r.text] += 1
-    return [(text, counts[text]) for text in order]
+    return [(text, counts[text], first_ts[text]) for text in order]
 
 
 # ---------------------------------------------------------------------------
@@ -164,15 +173,21 @@ def _parse_response(text: str) -> list[DanmakuLine]:
 # ---------------------------------------------------------------------------
 
 
-def _merge_lines(lines: list[DanmakuLine]) -> list[DanmakuLine]:
+def _merge_lines(lines: list[tuple[DanmakuLine, float]]) -> list[tuple[DanmakuLine, float]]:
+    """Merge `(DanmakuLine, content_ts)` pairs across sub-batches: combine identical
+    representative text (summing counts), keeping the EARLIEST content_ts seen for that text as
+    its position in the window's final chronological merge-sort."""
     counts: dict[str, int] = {}
+    ts: dict[str, float] = {}
     order: list[str] = []
-    for line in lines:
+    for line, line_ts in lines:
         if line.text not in counts:
             counts[line.text] = 0
+            ts[line.text] = line_ts
             order.append(line.text)
         counts[line.text] += line.count
-    return [DanmakuLine(text=text, count=counts[text]) for text in order]
+        ts[line.text] = min(ts[line.text], line_ts)
+    return [(DanmakuLine(text=text, count=counts[text]), ts[text]) for text in order]
 
 
 # ---------------------------------------------------------------------------
@@ -181,23 +196,31 @@ def _merge_lines(lines: list[DanmakuLine]) -> list[DanmakuLine]:
 
 
 def _reorder_chronologically(
-    lines: list[DanmakuLine], entries: list[tuple[str, int]]
-) -> list[DanmakuLine]:
+    lines: list[DanmakuLine], entries: list[tuple[str, int, float]]
+) -> list[tuple[DanmakuLine, float]]:
     """Reorder `lines` (a batch's parsed LLM response) by each line's `text` FIRST-OCCURRENCE
-    position in `entries` (the deduped, chronologically-ordered batch input). Chronological order
-    within a window is a LOAD-BEARING locked constraint (the probe found count-sort destroyed the
-    temporal signal), so it is enforced mechanically here rather than trusted from the prompt
-    text alone -- real model drift could otherwise silently reintroduce that exact regression.
+    position in `entries` (the deduped, chronologically-ordered batch input), and pair each line
+    with that entry's first-occurrence `content_ts`. Chronological order within a window is a
+    LOAD-BEARING locked constraint (the probe found count-sort destroyed the temporal signal), so
+    it is enforced mechanically here rather than trusted from the prompt text alone -- real model
+    drift could otherwise silently reintroduce that exact regression. The returned `content_ts`
+    also doubles as the merge-sort key the caller uses to interleave high_like lines.
 
     Representative text is contractually verbatim, so it should match an input entry; a line
     whose text does NOT match any entry (already a verbatim-rule violation) is kept after the
-    matched ones, in the order the LLM returned it, so a fence violation degrades gracefully
-    instead of crashing.
+    matched ones, in the order the LLM returned it -- with a fallback content_ts of the batch's
+    last entry, so it still sorts after everything the batch actually saw -- so a fence violation
+    degrades gracefully instead of crashing.
     """
-    order = {text: i for i, (text, _count) in enumerate(entries)}
-    matched = sorted((l for l in lines if l.text in order), key=lambda l: order[l.text])
-    unmatched = [l for l in lines if l.text not in order]
-    return matched + unmatched
+    order = {text: (i, ts) for i, (text, _count, ts) in enumerate(entries)}
+    matched = sorted(
+        (line for line in lines if line.text in order), key=lambda line: order[line.text][0]
+    )
+    unmatched = [line for line in lines if line.text not in order]
+    fallback_ts = entries[-1][2] if entries else 0.0
+    return [(line, order[line.text][1]) for line in matched] + [
+        (line, fallback_ts) for line in unmatched
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -206,9 +229,14 @@ def _reorder_chronologically(
 
 
 def _cluster_batch(
-    client, model: str, max_tokens: int, entries: list[tuple[str, int]]
-) -> list[DanmakuLine]:
-    payload = json.dumps([{"text": t, "count": c} for t, c in entries], ensure_ascii=False)
+    client, model: str, max_tokens: int, entries: list[tuple[str, int, float]]
+) -> list[tuple[DanmakuLine, float]]:
+    # The LLM stays a fenced mirror: payload is ONLY {text, count} -- content_ts (and, by
+    # construction, high_like -- promoted danmaku never reach this function) never crosses the
+    # fence.
+    payload = json.dumps(
+        [{"text": t, "count": c} for t, c, _ts in entries], ensure_ascii=False
+    )
     resp = client.chat.completions.create(
         model=model,
         messages=[
@@ -223,15 +251,17 @@ def _cluster_batch(
 
 
 def _cluster_window(
-    client, model: str, max_tokens: int, entries: list[tuple[str, int]]
-) -> list[DanmakuLine]:
+    client, model: str, max_tokens: int, entries: list[tuple[str, int, float]]
+) -> list[tuple[DanmakuLine, float]]:
     """Dynamic count-batching: split `entries` into consecutive sub-batches of at most
     `_BATCH_CAP`, call the LLM per batch, then merge (invisible outside this function -- the
-    caller sees one clustered result for the whole window)."""
+    caller sees one clustered result for the whole window). Each returned line carries its
+    first-occurrence `content_ts`, the merge-sort key `represent_danmaku` interleaves against
+    high_like lines."""
     if not entries:
         return []
     batches = [entries[i : i + _BATCH_CAP] for i in range(0, len(entries), _BATCH_CAP)]
-    lines: list[DanmakuLine] = []
+    lines: list[tuple[DanmakuLine, float]] = []
     for batch in batches:
         lines.extend(_cluster_batch(client, model, max_tokens, batch))
     return _merge_lines(lines)
@@ -243,7 +273,9 @@ def _cluster_window(
 
 
 def _fingerprint(fetch: DanmakuFetch) -> str:
-    blob = "".join(f"{r.content_ts}:{r.text}\x1f" for r in fetch.records)
+    # `high_like` folded in: a re-fetch that only changes promotion status (no text/ts change)
+    # must restage, since it changes which lines get extracted verbatim vs clustered.
+    blob = "".join(f"{r.content_ts}:{r.high_like}:{r.text}\x1f" for r in fetch.records)
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:10]
 
 
@@ -300,8 +332,27 @@ def represent_danmaku(
     for start, end, records in window_records(
         fetch.records, resolved_boundaries, duration_s=duration_s, window_s=window_s
     ):
-        entries = _exact_dedup(records)
-        lines = _cluster_window(client, model, settings.lmstudio_danmaku_max_tokens, entries)
+        # Extract-before-cluster: a high_like (promoted) danmaku is pulled out BEFORE the LLM
+        # ever sees the window, so its exact wording is never absorbed into a `x N` flood cluster
+        # -- even when byte-identical to one. The LLM only ever sees the ordinary partition.
+        promoted_records = [r for r in records if r.high_like]
+        ordinary_records = [r for r in records if not r.high_like]
+
+        ordinary_entries = _exact_dedup(ordinary_records)
+        clustered = _cluster_window(
+            client, model, settings.lmstudio_danmaku_max_tokens, ordinary_entries
+        )
+
+        promoted_entries = _exact_dedup(promoted_records)
+        promoted_lines = [
+            (DanmakuLine(text=text, count=count, high_like=True), ts)
+            for text, count, ts in promoted_entries
+        ]
+
+        # Mechanical merge-sort by first-occurrence content_ts -- the window's final chronological
+        # order, replacing the earlier index-based ordering now that high_like lines interleave.
+        combined = sorted(clustered + promoted_lines, key=lambda pair: pair[1])
+        lines = [line for line, _ts in combined]
         windows.append(DanmakuWindow(start=start, end=end, total=len(records), lines=lines))
 
     result = Danmaku(
