@@ -3,6 +3,7 @@ import json
 from harvest.config import Settings
 from harvest.merge import (
     DANMAKU_MD_CAP,
+    HIGH_LIKE_MD_CAP,
     build_bundle,
     chunk,
     chunk_boundaries,
@@ -488,6 +489,47 @@ def test_render_markdown_danmaku_under_cap_has_no_overflow_marker():
     bundle = _bundle_with_danmaku(dm)
     md = render_markdown(bundle, _settings())
     assert "more — see bundle.json" not in md
+
+
+def test_render_markdown_danmaku_two_cap_promoted_first_with_own_overflow_markers(tmp_path):
+    promoted = [
+        DanmakuLine(text=f"promo{i}", count=1, high_like=True)
+        for i in range(HIGH_LIKE_MD_CAP + 5)
+    ]
+    ordinary = [
+        DanmakuLine(text=f"ord{i}", count=1, high_like=False)
+        for i in range(DANMAKU_MD_CAP + 9)
+    ]
+    lines = promoted + ordinary
+    dm = Danmaku(
+        source_total=None, fetched_total=len(lines), model=None,
+        windows=[DanmakuWindow(start=0.0, end=75.0, total=len(lines), lines=lines)],
+    )
+    bundle = _bundle_with_danmaku(dm)
+    settings = Settings()
+    settings.out_dir = tmp_path / "out"
+
+    md = render_markdown(bundle, settings)
+
+    # Promoted lines render with the thumbs-up prefix, capped at HIGH_LIKE_MD_CAP.
+    for i in range(HIGH_LIKE_MD_CAP):
+        assert f"- \U0001F44D 「promo{i}」" in md
+    for i in range(HIGH_LIKE_MD_CAP, HIGH_LIKE_MD_CAP + 5):
+        assert f"promo{i}" not in md
+    # Ordinary lines render without the prefix, capped at DANMAKU_MD_CAP.
+    for i in range(DANMAKU_MD_CAP):
+        assert f"- 「ord{i}」" in md
+    for i in range(DANMAKU_MD_CAP, DANMAKU_MD_CAP + 9):
+        assert f"ord{i}" not in md
+    # Each group gets its OWN overflow marker.
+    assert "﹢5 more — see bundle.json" in md
+    assert "﹢9 more — see bundle.json" in md
+    # Promoted group renders before ordinary group within the window.
+    assert md.index("promo0") < md.index("ord0")
+
+    out = write_bundle(bundle, settings, frame_sources={}, frame_images=False)
+    data = json.loads((out / "bundle.json").read_text(encoding="utf-8"))
+    assert len(data["danmaku"]["windows"][0]["lines"]) == len(lines)  # uncapped in json
 
 
 def test_bundle_json_roundtrip_carries_complete_uncapped_danmaku(tmp_path):

@@ -160,14 +160,17 @@ bilibili and finds nothing, `bundle.danmaku` is still populated (not null) with 
 ```jsonc
 "danmaku": {
   "source_total": 12000,             // bilibili's platform-reported total; null if unavailable
-  "fetched_total": 8000,             // how many this fetch actually pulled (endpoint may sample)
-  "sampled": true,                   // fetched_total < source_total -> a sample, not a census
+  "fetched_total": 11400,            // census pull via the protobuf endpoint: ~90-94% of source_total;
+                                      // the gap is deleted/shielded danmaku, not sampling
   "model": "qwen2.5-7b-instruct",    // the LLM that produced the mirror below; provenance
   "windows": [
     {
       "start": 0.0, "end": 15.0,     // content-time window on danmaku's OWN fixed cadence (~15s)
       "total": 340,                  // raw danmaku count in this window, BEFORE clustering
-      "lines": [ { "text": "草", "count": 12 }, { "text": "…", "count": 1 } ]
+      "lines": [
+        { "text": "草", "count": 12, "high_like": false },
+        { "text": "这个技巧太强了", "count": 1, "high_like": true }
+      ]
     }
   ]
 }
@@ -184,16 +187,31 @@ a single chunk. Timing is deliberately vague (viewers react a few seconds late) 
 never paraphrased, translated, decoded, or labeled with sentiment/topic. Lines within a window are
 chronological by content time, never sorted by count.
 
+**`DanmakuLine.high_like`** marks bilibili's own 高赞 (platform-promoted) flag, extracted verbatim
+from the protobuf record *before* clustering (never absorbed into a flood's `count`) and never
+LLM-decided. Unlike the rest of the danmaku track, `high_like` is **higher authority than the
+surrounding mirror** — it's a platform fact (bilibili's own promotion decision), not crowd opinion to
+be doubted. See the authority carve-out below.
+
 **Danmaku authority: strictly BELOW `transcript`.** It is crowd expression — jokes, memes, sarcasm,
 frequently factually wrong — never treat it as authoritative content; it is signal about audience
-reaction, not a source of facts about the video.
+reaction, not a source of facts about the video. **Carve-out:** `high_like` is the one danmaku field
+that is *not* crowd-opinion-to-be-doubted — it's bilibili's own platform signal for which lines it
+promoted, so treat `high_like: true` as trustworthy provenance about audience reaction (still not a
+source of video facts, just a fact about which reaction the platform surfaced).
 
 **bundle.json is always complete; bundle.md is capped.** `bundle.json`'s `danmaku.windows[].lines` is
-the full, uncapped set. `bundle.md` renders a dedicated `## Danmaku` section (below the transcript
-chunks) with a one-line provenance note plus, per non-empty window, a `### [mm:ss] (N danmaku)`
-header and `- 「text」 ×count` lines (the `×count` suffix omitted when `count == 1`); each window caps
-at 50 rendered lines with a `- ﹢N more — see bundle.json` overflow marker beyond that. Atlas needing
-the complete set for a pathologically dense window must read `bundle.json`.
+the full, uncapped set, in chronological order by content time. `bundle.md` renders a dedicated
+`## Danmaku` section (below the transcript chunks) with a one-line provenance note plus, per
+non-empty window, a `### [mm:ss] (N danmaku)` header and a **two-cap** rendering: promoted
+(`high_like: true`) lines render FIRST as `- 👍 「text」 ×count`, capped at 20, followed by ordinary
+lines as `- 「text」 ×count`, capped at 50 (the `×count` suffix omitted when `count == 1`) — each
+group gets its OWN `- ﹢N more — see bundle.json` overflow marker beyond its cap. Because bundle.md
+groups promoted lines ahead of ordinary ones, the "chronological by content time" guarantee holds
+*within* each rendered group and across the complete `bundle.json`, but not across the md's
+promoted/ordinary split — bundle.json preserves the full chronological interleave regardless of
+`high_like`. Atlas needing the complete set, or the true chronological order across promoted and
+ordinary lines, must read `bundle.json`.
 
 ### Stable vs volatile fields
 

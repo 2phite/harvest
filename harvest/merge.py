@@ -19,6 +19,9 @@ from .schema import Bundle, Danmaku, Frame, Meta, Segment, Stats, Transcript
 # Pathological-size cap for danmaku lines rendered per window in bundle.md ONLY; bundle.json
 # always carries the complete, uncapped `Danmaku` via `model_dump_json`.
 DANMAKU_MD_CAP = 50
+# Separate cap for platform-promoted (high_like) lines, rendered as their own group ahead of
+# ordinary lines with their own overflow marker. Not a contract knob -- a rendering constant.
+HIGH_LIKE_MD_CAP = 20
 
 
 def iso_now() -> str:
@@ -167,13 +170,23 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
             if not w.lines:
                 continue
             lines.append(f"### [{_mmss(w.start)}] ({w.total} danmaku)")
-            shown = w.lines[:DANMAKU_MD_CAP]
-            for ln in shown:
+            # Two independent groups, each preserving w.lines' chronological order (stable
+            # filter): promoted (high_like) first, then ordinary. Each group has its own cap
+            # and its own overflow marker -- bundle.json stays the complete, uncapped set.
+            promoted = [ln for ln in w.lines if ln.high_like]
+            ordinary = [ln for ln in w.lines if not ln.high_like]
+            for ln in promoted[:HIGH_LIKE_MD_CAP]:
+                suffix = "" if ln.count == 1 else f" ×{ln.count}"
+                lines.append(f"- \U0001F44D 「{ln.text}」{suffix}")
+            promoted_overflow = len(promoted) - HIGH_LIKE_MD_CAP
+            if promoted_overflow > 0:
+                lines.append(f"- ﹢{promoted_overflow} more — see bundle.json")
+            for ln in ordinary[:DANMAKU_MD_CAP]:
                 suffix = "" if ln.count == 1 else f" ×{ln.count}"
                 lines.append(f"- 「{ln.text}」{suffix}")
-            overflow = len(w.lines) - DANMAKU_MD_CAP
-            if overflow > 0:
-                lines.append(f"- ﹢{overflow} more — see bundle.json")
+            ordinary_overflow = len(ordinary) - DANMAKU_MD_CAP
+            if ordinary_overflow > 0:
+                lines.append(f"- ﹢{ordinary_overflow} more — see bundle.json")
             lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"

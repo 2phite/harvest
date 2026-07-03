@@ -24,8 +24,9 @@ Keep this seam clean: harvest is a deterministic batch unit; everything interpre
 elsewhere.
 
 The defining superpower is **authenticated acquisition from walled/rich media sources, then do
-whatever with what you pulled** — today that "whatever" is the bundle; the architecture is built so
-future outputs (raw media collection, danmaku, thumbnails, AV remux) are additive.
+whatever with what you pulled** — today that "whatever" is the bundle (plus the opt-in `--danmaku`
+crowd-mirror track, bilibili only); the architecture is built so future outputs (raw media
+collection, thumbnails, AV remux) are additive.
 
 ## 2. Scope
 
@@ -33,8 +34,9 @@ future outputs (raw media collection, danmaku, thumbnails, AV remux) are additiv
 talking" (lectures, talks) — single-speaker, slide-or-talking-head.
 
 **Deferred** (architecture accommodates, not built): playlists, live VODs, members-only/age-gated
-bulk flows, `bilibili.tv`, and roadmap stages (danmaku, thumbnail metadata, AV remux for
-collection).
+bulk flows, `bilibili.tv`, and roadmap stages (thumbnail metadata, AV remux for collection).
+Danmaku shipped as the opt-in `--danmaku` crowd-mirror track (bilibili only; see §6/§8 and
+PROTOCOL.md).
 
 ## 3. Stack
 
@@ -209,6 +211,11 @@ Trimmed fixtures seeding the four YouTube branches live in `tests/fixtures/youtu
   skip done parts via caching. YouTube v1 is always `part=1`; a future playlist entry maps to a part.
 - **CLI verb grammar.** `harvest <verb> <url>`: `ingest` (full pipeline), `probe` (cheap metadata, no
   media). No bare-url form. Scales to future verbs (`collect`, …) and sources.
+- **Danmaku acquisition = the protobuf census endpoint (`seg.so`), not WBI-signed sampling.**
+  `fetched_total` is a near-complete pull (~90–94% of `source_total`; the gap is deleted/shielded
+  danmaku, not a sample cut short). `DanmakuLine.high_like` mirrors bilibili's own 高赞
+  (platform-promoted) flag verbatim, extracted before clustering — see PROTOCOL.md for the full
+  contract and `bundle.md`'s two-cap (promoted-first) rendering.
 
 ## 9. Repository layout (target)
 
