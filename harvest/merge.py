@@ -16,9 +16,8 @@ from .config import Settings
 from .providers.base import Canonical, SourceMetadata
 from .schema import Bundle, Danmaku, Frame, Meta, Segment, Stats, Transcript
 
-# Pathological-size cap for danmaku lines rendered per window in bundle.md ONLY; bundle.json
-# always carries the complete, uncapped `Danmaku` via `model_dump_json`.
-DANMAKU_MD_CAP = 50
+# The ordinary per-window danmaku cap for bundle.md lives in Settings.danmaku_md_cap
+# (env HARVEST_DANMAKU_MD_CAP) -- a tunable gestalt-sample dial. bundle.json is always complete.
 # Separate cap for platform-promoted (high_like) lines, rendered as their own group ahead of
 # ordinary lines with their own overflow marker. Not a contract knob -- a rendering constant.
 HIGH_LIKE_MD_CAP = 20
@@ -181,10 +180,10 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
             promoted_overflow = len(promoted) - HIGH_LIKE_MD_CAP
             if promoted_overflow > 0:
                 lines.append(f"- ﹢{promoted_overflow} more — see bundle.json")
-            for ln in ordinary[:DANMAKU_MD_CAP]:
+            for ln in ordinary[: settings.danmaku_md_cap]:
                 suffix = "" if ln.count == 1 else f" ×{ln.count}"
                 lines.append(f"- 「{ln.text}」{suffix}")
-            ordinary_overflow = len(ordinary) - DANMAKU_MD_CAP
+            ordinary_overflow = len(ordinary) - settings.danmaku_md_cap
             if ordinary_overflow > 0:
                 lines.append(f"- ﹢{ordinary_overflow} more — see bundle.json")
             lines.append("")

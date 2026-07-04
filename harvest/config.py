@@ -136,6 +136,13 @@ class Settings:
     # mega-buckets). Sparse videos stay fragmented at any width — that's honest, not an artifact.
     danmaku_window_s: float = 15.0
 
+    # Per-window cap on ORDINARY danmaku lines rendered in bundle.md (the primary Atlas
+    # ingestion surface); bundle.json always carries the complete, uncapped set. A deliberate
+    # gestalt-sample dial, NOT a pathological ceiling: Atlas Gate 2 needs the crowd's per-beat
+    # gestalt, not exhaustiveness. 15 nearly halves the section (empirical: ~3.2k→~1.8k lines
+    # over a 3.7k-danmaku demo, 2026-07) while keeping ~15 distinct reactions per hot 15s beat.
+    danmaku_md_cap: int = 15
+
     # quality gate (D5)
     quality: QualityThresholds = field(default_factory=QualityThresholds)
 
@@ -154,6 +161,9 @@ class Settings:
             ),
             danmaku_window_s=float(
                 os.environ.get("HARVEST_DANMAKU_WINDOW_S", cls.danmaku_window_s)
+            ),
+            danmaku_md_cap=int(
+                os.environ.get("HARVEST_DANMAKU_MD_CAP", cls.danmaku_md_cap)
             ),
             sessdata=os.environ.get("SESSDATA") or None,
             cookies_browser=os.environ.get("HARVEST_COOKIES_BROWSER", cls.cookies_browser),

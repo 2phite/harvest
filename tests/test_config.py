@@ -32,6 +32,13 @@ def test_danmaku_window_s_default_is_15_and_env_overridable(monkeypatch):
     assert Settings.load().danmaku_window_s == 20.0
 
 
+def test_danmaku_md_cap_default_is_15_and_env_overridable(monkeypatch):
+    monkeypatch.delenv("HARVEST_DANMAKU_MD_CAP", raising=False)
+    assert Settings.load().danmaku_md_cap == 15
+    monkeypatch.setenv("HARVEST_DANMAKU_MD_CAP", "25")
+    assert Settings.load().danmaku_md_cap == 25
+
+
 def test_youtube_cookies_defaults_off(monkeypatch):
     monkeypatch.delenv("HARVEST_YT_COOKIES", raising=False)
     assert Settings.load().youtube_cookies is False
