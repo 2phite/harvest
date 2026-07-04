@@ -213,9 +213,12 @@ Trimmed fixtures seeding the four YouTube branches live in `tests/fixtures/youtu
   media). No bare-url form. Scales to future verbs (`collect`, …) and sources.
 - **Danmaku acquisition = the protobuf census endpoint (`seg.so`), not WBI-signed sampling.**
   `fetched_total` is a near-complete pull (~90–94% of `source_total`; the gap is deleted/shielded
-  danmaku, not a sample cut short). `DanmakuLine.high_like` mirrors bilibili's own 高赞
-  (platform-promoted) flag verbatim, extracted before clustering — see PROTOCOL.md for the full
-  contract and `bundle.md`'s two-cap (promoted-first) rendering.
+  danmaku, not a sample cut short). Two per-line *elevated* signals ride the same census, extracted
+  verbatim before clustering: `DanmakuLine.high_like` (bilibili's own 高赞 platform-promotion flag)
+  and `DanmakuLine.author` (`"owner"`/`"staff"` — a UP主 or 合作 author danmaku, crc32-matched off the
+  poster hash against the view response's author mids, no extra fetch). Both rank above the crowd
+  mirror. See PROTOCOL.md for the full contract and `bundle.md`'s single-pass chronological rendering
+  (elevated lines pilled `👍`/`UP主`/`合作` and never dropped; only the ordinary flood is capped).
 
 ## 9. Repository layout (target)
 

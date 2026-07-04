@@ -4,7 +4,6 @@ import yaml
 
 from harvest.config import Settings
 from harvest.merge import (
-    HIGH_LIKE_MD_CAP,
     _neutralize,
     build_bundle,
     chunk,
@@ -560,42 +559,70 @@ def test_render_markdown_danmaku_under_cap_has_no_overflow_marker():
     assert "more — see bundle.json" not in md
 
 
-def test_render_markdown_danmaku_two_cap_promoted_first_with_own_overflow_markers(tmp_path):
-    settings = Settings()
-    settings.out_dir = tmp_path / "out"
+def test_render_markdown_danmaku_pills_owner_staff_highlike_and_both():
+    dm = Danmaku(
+        source_total=None, fetched_total=4, model=None,
+        windows=[DanmakuWindow(start=0.0, end=75.0, total=4, lines=[
+            DanmakuLine(text="up", count=1, author="owner"),
+            DanmakuLine(text="co", count=1, author="staff"),
+            DanmakuLine(text="hot", count=1, high_like=True),
+            DanmakuLine(text="both", count=1, high_like=True, author="owner"),
+        ])],
+    )
+    md = render_markdown(_bundle_with_danmaku(dm), _settings())
+    assert "- UP主 「up」" in md
+    assert "- 合作 「co」" in md
+    assert "- \U0001F44D 「hot」" in md
+    assert "- \U0001F44D UP主 「both」" in md
+
+
+def test_render_markdown_danmaku_elevated_never_dropped_ordinary_capped():
+    settings = _settings()
     cap = settings.danmaku_md_cap
-    promoted = [
-        DanmakuLine(text=f"promo{i}", count=1, high_like=True)
-        for i in range(HIGH_LIKE_MD_CAP + 5)
-    ]
-    ordinary = [
-        DanmakuLine(text=f"ord{i}", count=1, high_like=False)
-        for i in range(cap + 9)
-    ]
-    lines = promoted + ordinary
+    # Interleave: an elevated line, then cap+4 ordinary, then another elevated line.
+    lines = (
+        [DanmakuLine(text="owner note", count=1, author="owner")]
+        + [DanmakuLine(text=f"ord{i}", count=1) for i in range(cap + 4)]
+        + [DanmakuLine(text="hot", count=1, high_like=True)]
+    )
     dm = Danmaku(
         source_total=None, fetched_total=len(lines), model=None,
         windows=[DanmakuWindow(start=0.0, end=75.0, total=len(lines), lines=lines)],
     )
-    bundle = _bundle_with_danmaku(dm)
-
-    md = render_markdown(bundle, settings)
-
-    for i in range(HIGH_LIKE_MD_CAP):
-        assert f"- \U0001F44D 「promo{i}」" in md
-    for i in range(HIGH_LIKE_MD_CAP, HIGH_LIKE_MD_CAP + 5):
-        assert f"promo{i}" not in md
+    md = render_markdown(_bundle_with_danmaku(dm), settings)
+    # Both elevated lines survive regardless of the ordinary cap.
+    assert "- UP主 「owner note」" in md
+    assert "- \U0001F44D 「hot」" in md
+    # Ordinary capped at `cap`; the 4 beyond are dropped with a single overflow marker.
     for i in range(cap):
-        assert f"- 「ord{i}」" in md
-    for i in range(cap, cap + 9):
-        assert f"ord{i}" not in md
-    assert "﹢5 more — see bundle.json" in md
-    assert "﹢9 more — see bundle.json" in md
-    assert md.index("promo0") < md.index("ord0")
+        assert f"「ord{i}」" in md
+    for i in range(cap, cap + 4):
+        assert f"「ord{i}」" not in md
+    assert "﹢4 more — see bundle.json" in md
 
-    out = write_bundle(bundle, settings, frame_sources={}, frame_images=False)
-    data = json.loads((out / "bundle.json").read_text(encoding="utf-8"))
-    assert len(data["danmaku"]["windows"][0]["lines"]) == len(lines)  # uncapped in json
+
+def test_render_markdown_danmaku_preserves_chronological_order_across_kinds():
+    dm = Danmaku(
+        source_total=None, fetched_total=3, model=None,
+        windows=[DanmakuWindow(start=0.0, end=75.0, total=3, lines=[
+            DanmakuLine(text="first ordinary", count=1),
+            DanmakuLine(text="second is owner", count=1, author="owner"),
+            DanmakuLine(text="third hot", count=1, high_like=True),
+        ])],
+    )
+    md = render_markdown(_bundle_with_danmaku(dm), _settings())
+    assert md.index("first ordinary") < md.index("second is owner") < md.index("third hot")
+
+
+def test_render_markdown_danmaku_note_mentions_elevation_pills():
+    dm = Danmaku(
+        source_total=100, fetched_total=80, model="qwen-test",
+        windows=[DanmakuWindow(start=0.0, end=75.0, total=1,
+                               lines=[DanmakuLine(text="x", count=1)])],
+    )
+    md = render_markdown(_bundle_with_danmaku(dm), _settings())
+    assert "Lines pilled" in md
+    assert "\U0001F44D/UP主/合作" in md
 
 
 def test_description_cannot_forge_sections():

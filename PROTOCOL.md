@@ -168,8 +168,9 @@ bilibili and finds nothing, `bundle.danmaku` is still populated (not null) with 
       "start": 0.0, "end": 15.0,     // content-time window on danmaku's OWN fixed cadence (~15s)
       "total": 340,                  // raw danmaku count in this window, BEFORE clustering
       "lines": [
-        { "text": "草", "count": 12, "high_like": false },
-        { "text": "这个技巧太强了", "count": 1, "high_like": true }
+        { "text": "草", "count": 12, "high_like": false, "author": null },
+        { "text": "这个技巧太强了", "count": 1, "high_like": true, "author": null },
+        { "text": "这里我口误了，应该是1937年", "count": 1, "high_like": false, "author": "owner" }
       ]
     }
   ]
@@ -187,31 +188,46 @@ a single chunk. Timing is deliberately vague (viewers react a few seconds late) 
 never paraphrased, translated, decoded, or labeled with sentiment/topic. Lines within a window are
 chronological by content time, never sorted by count.
 
-**`DanmakuLine.high_like`** marks bilibili's own 高赞 (platform-promoted) flag, extracted verbatim
-from the protobuf record *before* clustering (never absorbed into a flood's `count`) and never
-LLM-decided. Unlike the rest of the danmaku track, `high_like` is **higher authority than the
-surrounding mirror** — it's a platform fact (bilibili's own promotion decision), not crowd opinion to
-be doubted. See the authority carve-out below.
+**Elevated lines: `high_like` and `author`.** Two orthogonal per-line signals mark a danmaku as
+higher-authority than the surrounding crowd mirror. Both are resolved **mechanically before
+clustering** (extracted verbatim, never absorbed into a flood's `count`, never LLM-decided):
+
+- **`DanmakuLine.high_like`** — bilibili's own 高赞 (platform-promoted) flag, read from the protobuf
+  record's `attr` bitfield. A platform fact (bilibili's own promotion decision), not crowd opinion to
+  be doubted.
+- **`DanmakuLine.author`** — `"owner"` when the danmaku was posted by the video's primary uploader
+  (UP主), `"staff"` when posted by a 合作 co-author, `null` for organic crowd. Resolved by
+  crc32-matching the record's poster hash (`midHash`) against the video's author mids (`owner.mid` +
+  `staff[].mid`, both already in the `view` response — no extra fetch); owner wins on overlap. It is
+  **author-authored content**, higher authority than the crowd mirror.
+
+The two are independent — a line can be both (an uploader danmaku the platform also promoted), giving
+`{ "high_like": true, "author": "owner" }`.
 
 **Danmaku authority: strictly BELOW `transcript`.** It is crowd expression — jokes, memes, sarcasm,
 frequently factually wrong — never treat it as authoritative content; it is signal about audience
-reaction, not a source of facts about the video. **Carve-out:** `high_like` is the one danmaku field
-that is *not* crowd-opinion-to-be-doubted — it's bilibili's own platform signal for which lines it
-promoted, so treat `high_like: true` as trustworthy provenance about audience reaction (still not a
-source of video facts, just a fact about which reaction the platform surfaced).
+reaction, not a source of facts about the video. **Carve-outs** (the lines that are *not*
+crowd-opinion-to-be-doubted): `high_like: true` is bilibili's own platform signal for which lines it
+promoted (trustworthy provenance about audience reaction); `author` (`"owner"`/`"staff"`) is content
+the video's own author(s) injected into the stream — treat it as author statement (e.g. a correction
+or a reply to viewers), well above the crowd, though still not the authoritative `transcript`.
 
 **bundle.json is always complete; bundle.md is capped.** `bundle.json`'s `danmaku.windows[].lines` is
 the full, uncapped set, in chronological order by content time. `bundle.md` renders a dedicated
 `## Danmaku` section (below the transcript chunks) with a one-line provenance note plus, per
-non-empty window, a `### [mm:ss] (N danmaku)` header and a **two-cap** rendering: promoted
-(`high_like: true`) lines render FIRST as `- 👍 「text」 ×count`, capped at 20, followed by ordinary
-lines as `- 「text」 ×count`, capped at 50 (the `×count` suffix omitted when `count == 1`) — each
-group gets its OWN `- ﹢N more — see bundle.json` overflow marker beyond its cap. Because bundle.md
-groups promoted lines ahead of ordinary ones, the "chronological by content time" guarantee holds
-*within* each rendered group and across the complete `bundle.json`, but not across the md's
-promoted/ordinary split — bundle.json preserves the full chronological interleave regardless of
-`high_like`. Atlas needing the complete set, or the true chronological order across promoted and
-ordinary lines, must read `bundle.json`.
+non-empty window, a `### [mm:ss] (N danmaku)` header, then the window's lines **in a single
+chronological pass** (matching `bundle.json` order). Each line prints its elevation pill(s) by flag,
+then `「text」 ×count` (the `×count` suffix omitted when `count == 1`):
+
+- `high_like: true` → `👍`, `author: "owner"` → `UP主`, `author: "staff"` → `合作`.
+- Both flags combine, `👍` first: `- 👍 UP主 「text」`.
+- No flags → `- 「text」 ×count`.
+
+**Elevated lines (`high_like` or `author`) are never dropped** — they always render in place. Only
+**ordinary** lines (no flag) are capped, at `danmaku_md_cap`, with a single
+`- ﹢N more — see bundle.json` overflow marker for the ordinary overflow. bundle.md thus preserves
+the true chronological order across all line kinds; Atlas needing the complete uncapped ordinary set
+still reads `bundle.json`.
 
 ### Stable vs volatile fields
 

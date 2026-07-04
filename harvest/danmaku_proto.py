@@ -4,10 +4,10 @@
 This is the acquisition-time replacement for the old server-sampled XML endpoint: the census
 returns every danmaku in a segment (not a server-side sample), and each `DanmakuElem` carries an
 `attr` bitfield we didn't have before -- specifically bit2, HighLike (高赞), a later task's input
-signal. Seeded from the proven feasibility spike (`scratch/spike_seg_attr.py`), trimmed to only
-the three fields `RawDanmaku` keeps: `content`(7), `progress`(2), `attr`(13). color(5)/mode(3)/
-weight(9) are read by the spike but deliberately NOT carried into `RawDanmaku` (descoped, see
-task brief).
+signal. Seeded from the proven feasibility spike (`scratch/spike_seg_attr.py`), decoded fields are:
+`content`(7), `progress`(2), `attr`(13), and `midHash`(6) for author role resolution. color(5)/
+mode(3)/weight(9) are read by the spike but deliberately NOT carried into `RawDanmaku` (descoped,
+see task brief).
 """
 
 from __future__ import annotations
@@ -21,13 +21,16 @@ _HIGH_LIKE_BIT = 2
 @dataclass(frozen=True)
 class RawDanmaku:
     """One `DanmakuElem`, stripped to the fields the acquisition contract keeps: `content_ts`
-    (seconds into the video the comment is pinned to, from `progress` ms), its `text`, and
-    `high_like` (attr bit2). `mode`/color/weight and the rest of the elem are deliberately
-    dropped (descoped, see task brief)."""
+    (seconds into the video the comment is pinned to, from `progress` ms), its `text`,
+    `high_like` (attr bit2), `mid_hash` (from field 6, crc32 hex of the poster's mid), and
+    `author` (once resolved vs the video's author mids; else None). `mode`/color/weight and the
+    rest of the elem are deliberately dropped (descoped, see task brief)."""
 
     content_ts: float
     text: str
     high_like: bool = False
+    mid_hash: str = ""  # bilibili midHash (field 6): crc32 hex of poster's mid; "" if absent
+    author: str | None = None  # "owner"/"staff" once resolved vs the video's author mids; else None
 
 
 def _varint(buf: bytes, pos: int) -> tuple[int, int]:
@@ -69,9 +72,12 @@ def _parse_elem(buf: bytes) -> RawDanmaku | None:
     content: str | None = None
     progress_ms = 0
     attr = 0
+    mid_hash = ""
     for field, wt, val in _fields(buf):
         if field == 2 and wt == 0:
             progress_ms = val
+        elif field == 6 and wt == 2:
+            mid_hash = val.decode("utf-8", "replace")
         elif field == 7 and wt == 2:
             content = val.decode("utf-8", "replace")
         elif field == 13 and wt == 0:
@@ -82,6 +88,7 @@ def _parse_elem(buf: bytes) -> RawDanmaku | None:
         content_ts=progress_ms / 1000.0,
         text=content,
         high_like=bool((attr >> _HIGH_LIKE_BIT) & 1),
+        mid_hash=mid_hash,
     )
 
 

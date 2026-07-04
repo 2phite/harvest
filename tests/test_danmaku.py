@@ -6,6 +6,7 @@ from harvest.config import Settings
 from harvest.danmaku import (
     PROMPT_VERSION,
     _boundaries,
+    _dedup_elevated,
     _exact_dedup,
     _merge_lines,
     _parse_response,
@@ -22,8 +23,8 @@ def _canonical():
     return Canonical(platform="bilibili.com", id="BV1", part=1, url="https://b/video/BV1")
 
 
-def _rd(ts, text, high_like=False):
-    return RawDanmaku(content_ts=ts, text=text, high_like=high_like)
+def _rd(ts, text, high_like=False, author=None):
+    return RawDanmaku(content_ts=ts, text=text, high_like=high_like, author=author)
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +421,12 @@ def test_danmaku_line_high_like_defaults_false():
     assert promoted.high_like is True
 
 
+def test_danmakuline_author_field_defaults_none_and_accepts_roles():
+    assert DanmakuLine(text="x").author is None
+    assert DanmakuLine(text="x", author="owner").author == "owner"
+    assert DanmakuLine(text="x", author="staff").author == "staff"
+
+
 def test_represent_danmaku_extracts_high_like_verbatim_before_clustering(tmp_path):
     # A promoted (high_like) danmaku whose text is byte-identical to an ordinary flood must
     # still appear as its OWN high_like=True line -- the flood clusters separately from it, and
@@ -554,6 +561,83 @@ def test_represent_danmaku_prompt_forbids_gaps_section_and_count_descending():
     assert "GAPS" not in DANMAKU_PROMPT
     assert "descending" not in DANMAKU_PROMPT.lower()
     assert "chronolog" in DANMAKU_PROMPT.lower()
+
+
+def test_dedup_elevated_keys_on_text_highlike_author_and_counts():
+    from harvest.danmaku import _dedup_elevated
+    records = [
+        _rd(1.0, "同", high_like=True),
+        _rd(2.0, "同", high_like=True),          # same (text, flags) -> count 2
+        _rd(3.0, "同", author="owner"),           # same text, different flags -> distinct line
+        _rd(4.0, "改一下", author="staff"),
+    ]
+    out = _dedup_elevated(records)
+    assert [(l.text, l.count, l.high_like, l.author) for l, _ in out] == [
+        ("同", 2, True, None),
+        ("同", 1, False, "owner"),
+        ("改一下", 1, False, "staff"),
+    ]
+    assert [ts for _, ts in out] == [1.0, 3.0, 4.0]  # first-occurrence content_ts
+
+
+def test_represent_danmaku_extracts_author_lines_before_clustering(tmp_path):
+    # The LLM stub clusters ONLY what it is handed; if an author line reached it, it would be
+    # collapsed/echoed. Assert author + high_like lines bypass it and keep verbatim text + flags.
+    settings = Settings()
+    settings.cache_dir = tmp_path / "cache"
+
+    class _StubClient:
+        def __init__(self):
+            self.seen_texts = []
+
+        class _Chat:
+            def __init__(self, outer):
+                self.completions = _StubClient._Completions(outer)
+
+        class _Completions:
+            def __init__(self, outer):
+                self.outer = outer
+
+            def create(self, *, model, messages, temperature, max_tokens):
+                payload = messages[0]["content"]
+                self.outer.seen_texts.append(payload)
+                # Echo the input array back unchanged (a faithful no-op clusterer).
+                start = payload.index("[")
+                arr = payload[start:]
+                return type("R", (), {"choices": [type("C", (), {"message": type(
+                    "M", (), {"content": arr})()})()]})()
+
+        def __init_subclass__(cls):  # pragma: no cover
+            pass
+
+    client = _StubClient()
+    client.chat = _StubClient._Chat(client)
+
+    fetch = DanmakuFetch(
+        source_total=None, fetched_total=4,
+        records=[
+            _rd(1.0, "普通评论"),
+            _rd(2.0, "这里我口误了", author="owner"),
+            _rd(3.0, "配音补充", author="staff"),
+            _rd(4.0, "神弹幕", high_like=True),
+        ],
+    )
+    result = represent_danmaku(
+        _canonical(), fetch, settings, window_s=75.0, duration_s=75.0, client=client
+    )
+    lines = result.windows[0].lines
+    by_text = {l.text: l for l in lines}
+    assert by_text["这里我口误了"].author == "owner"
+    assert by_text["配音补充"].author == "staff"
+    assert by_text["神弹幕"].high_like is True
+    # The clusterer only ever saw the ordinary line, never an elevated one.
+    joined = " ".join(client.seen_texts)
+    assert "普通评论" in joined
+    assert "这里我口误了" not in joined
+    assert "配音补充" not in joined
+    assert "神弹幕" not in joined
+    # Chronological order preserved across kinds.
+    assert [l.text for l in lines] == ["普通评论", "这里我口误了", "配音补充", "神弹幕"]
 
 
 @pytest.mark.live

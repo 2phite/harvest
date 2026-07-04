@@ -112,6 +112,9 @@ class DanmakuLine(BaseModel):
     count: int = 1
     high_like: bool = False  # bilibili 高赞 / platform-promoted -- extracted verbatim BEFORE
     # clustering (never absorbed into a flood's count), never LLM-decided (Task 2)
+    author: Literal["owner", "staff"] | None = None  # video author of this line: "owner" (UP主) or
+    # "staff" (合作 co-author), crc32-matched off the poster hash BEFORE clustering; None = organic
+    # crowd. Higher authority than the surrounding crowd mirror (see PROTOCOL.md authority carve-out).
 
 
 class DanmakuWindow(BaseModel):

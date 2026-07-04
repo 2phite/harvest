@@ -21,9 +21,6 @@ from .schema import Bundle, Danmaku, Frame, Meta, Segment, Stats, Transcript
 
 # The ordinary per-window danmaku cap for bundle.md lives in Settings.danmaku_md_cap
 # (env HARVEST_DANMAKU_MD_CAP) -- a tunable gestalt-sample dial. bundle.json is always complete.
-# Separate cap for platform-promoted (high_like) lines, rendered as their own group ahead of
-# ordinary lines with their own overflow marker. Not a contract knob -- a rendering constant.
-HIGH_LIKE_MD_CAP = 20
 
 
 def iso_now() -> str:
@@ -54,6 +51,19 @@ def _neutralize(text: str) -> str:
             line = line[:i] + "\\" + line[i:]
         out.append(line)
     return "\n".join(out)
+
+
+def _line_pills(line) -> str:
+    """Elevation-pill prefix for a danmaku line: 👍 (high_like) then UP主/合作 (author), space-joined
+    with a trailing space. Empty string for an ordinary crowd line."""
+    pills: list[str] = []
+    if line.high_like:
+        pills.append("\U0001F44D")
+    if line.author == "owner":
+        pills.append("UP主")
+    elif line.author == "staff":
+        pills.append("合作")
+    return (" ".join(pills) + " ") if pills else ""
 
 
 @dataclass
@@ -195,28 +205,30 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
             note += f" of {dm.source_total}"
         if dm.model:
             note += f" · {dm.model}"
-        note += "_"
+        note += (
+            ". Lines pilled \U0001F44D/UP主/合作 rank above the crowd "
+            "(platform / video-author signals)._"
+        )
         lines.append(note)
         lines.append("")
         for w in dm.windows:
             if not w.lines:
                 continue
             lines.append(f"### [{_mmss(w.start)}] ({w.total} danmaku)")
-            # Two independent groups, each preserving w.lines' chronological order (stable
-            # filter): promoted (high_like) first, then ordinary. Each group has its own cap
-            # and its own overflow marker -- bundle.json stays the complete, uncapped set.
-            promoted = [ln for ln in w.lines if ln.high_like]
-            ordinary = [ln for ln in w.lines if not ln.high_like]
-            for ln in promoted[:HIGH_LIKE_MD_CAP]:
+            # ONE chronological pass (w.lines is already content-time ordered). Elevated lines
+            # (high_like or author) always render in place; only ordinary lines are capped.
+            ordinary_shown = 0
+            for ln in w.lines:
+                if not (ln.high_like or ln.author is not None):
+                    if ordinary_shown >= settings.danmaku_md_cap:
+                        continue
+                    ordinary_shown += 1
                 suffix = "" if ln.count == 1 else f" ×{ln.count}"
-                lines.append(f"- \U0001F44D 「{_neutralize(ln.text)}」{suffix}")
-            promoted_overflow = len(promoted) - HIGH_LIKE_MD_CAP
-            if promoted_overflow > 0:
-                lines.append(f"- ﹢{promoted_overflow} more — see bundle.json")
-            for ln in ordinary[: settings.danmaku_md_cap]:
-                suffix = "" if ln.count == 1 else f" ×{ln.count}"
-                lines.append(f"- 「{_neutralize(ln.text)}」{suffix}")
-            ordinary_overflow = len(ordinary) - settings.danmaku_md_cap
+                lines.append(f"- {_line_pills(ln)}「{_neutralize(ln.text)}」{suffix}")
+            ordinary_total = sum(
+                1 for ln in w.lines if not (ln.high_like or ln.author is not None)
+            )
+            ordinary_overflow = ordinary_total - settings.danmaku_md_cap
             if ordinary_overflow > 0:
                 lines.append(f"- ﹢{ordinary_overflow} more — see bundle.json")
             lines.append("")

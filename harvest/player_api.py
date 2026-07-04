@@ -16,7 +16,8 @@ import json
 import logging
 import math
 import urllib.request
-from dataclasses import dataclass
+import zlib
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from urllib.error import URLError
 
@@ -79,6 +80,7 @@ class ViewData(BaseModel):
     pubdate: int | None = None  # Unix seconds, publish time (SPEC: published_at source)
     owner_mid: int | None = None
     owner_name: str | None = None
+    staff_mids: list[int] = []  # 合作 co-author mids from data.staff[]; [] when solo
     pic: str | None = None
     view_count: int | None = None
     danmaku_count: int | None = None
@@ -148,6 +150,8 @@ def fetch_view(canonical: Canonical, settings: Settings, *, opener=None) -> View
 
     data = view.get("data") or {}
     owner = data.get("owner") or {}
+    staff = data.get("staff") or []
+    staff_mids = [s["mid"] for s in staff if isinstance(s, dict) and s.get("mid") is not None]
     desc = data.get("desc") or None
     stat = data.get("stat") or {}
 
@@ -177,6 +181,7 @@ def fetch_view(canonical: Canonical, settings: Settings, *, opener=None) -> View
             pubdate=data.get("pubdate"),
             owner_mid=owner.get("mid"),
             owner_name=owner.get("name"),
+            staff_mids=staff_mids,
             pic=data.get("pic") or None,
             view_count=stat.get("view"),
             danmaku_count=stat.get("danmaku"),
@@ -255,6 +260,42 @@ class DanmakuFetch:
     records: list[RawDanmaku]
 
 
+def _mid_crc32(mid: int) -> int:
+    """bilibili's danmaku poster hash is the standard CRC32 of the mid's decimal string."""
+    return zlib.crc32(str(mid).encode("utf-8")) & 0xFFFFFFFF
+
+
+def classify_authors(
+    records: list[RawDanmaku], owner_mid: int | None, staff_mids: list[int]
+) -> list[RawDanmaku]:
+    """Tag each record's `author` by crc32-matching its `mid_hash` against the video's author mids:
+    `owner_mid` -> "owner" (UP主), any `staff_mids` entry -> "staff" (合作). Owner wins on overlap.
+    Records that match no author, or whose `mid_hash` is empty/unparseable, keep author=None.
+
+    Pure and deterministic, no network. Compares integers (crc32 value vs int(mid_hash, 16)) so it
+    is robust to leading-zero padding / case in bilibili's hex rendering of the hash. Returns the
+    input list object unchanged when there are no author mids to match against.
+    """
+    role_by_hash: dict[int, str] = {}
+    for mid in staff_mids:
+        if mid is not None:
+            role_by_hash[_mid_crc32(mid)] = "staff"
+    if owner_mid is not None:
+        role_by_hash[_mid_crc32(owner_mid)] = "owner"  # owner precedence over any staff overlap
+    if not role_by_hash:
+        return records
+    out: list[RawDanmaku] = []
+    for r in records:
+        role: str | None = None
+        if r.mid_hash:
+            try:
+                role = role_by_hash.get(int(r.mid_hash, 16))
+            except ValueError:
+                role = None
+        out.append(replace(r, author=role) if role else r)
+    return out
+
+
 def fetch_danmaku(
     canonical: Canonical, settings: Settings, *, opener=None, view: ViewData | None = None
 ) -> DanmakuFetch:
@@ -323,4 +364,6 @@ def fetch_danmaku(
         idx += 1
 
     records.sort(key=lambda r: r.content_ts)
+    if view is not None:
+        records = classify_authors(records, view.owner_mid, view.staff_mids)
     return DanmakuFetch(source_total=source_total, fetched_total=len(records), records=records)
