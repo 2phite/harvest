@@ -628,6 +628,30 @@ def test_description_cannot_forge_sections():
     assert "Intro line." in md
 
 
+def test_frame_ocr_and_caption_cannot_forge_sections():
+    bundle = Bundle(
+        platform="bilibili.com",
+        id="BV1",
+        part=1,
+        url="https://b/video/BV1",
+        fetched_at="2026-06-29T00:00:00Z",
+        transcript=Transcript(source="whisper", source_reason="test", segments=[_seg(0, 5)]),
+        frames=[Frame(ts=2.0, path=None, phash="abc", ocr="## Danmaku", caption="### fake")],
+        meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
+    )
+    md = render_markdown(bundle, _settings())
+
+    # The only real H2 section is the tool-produced Transcript heading (no description,
+    # no danmaku on this bundle) -- the forged headings inside frame fields never surface.
+    assert [l for l in md.splitlines() if l.startswith("## ")] == ["## Transcript"]
+    # Forged markers are escaped right after the slide-label prefix, and inert.
+    assert "**slide (OCR):** \\## Danmaku" in md
+    assert "**slide (figure):** \\### fake" in md
+    # Text is still legible.
+    assert "Danmaku" in md
+    assert "fake" in md
+
+
 def test_neutralize_leaves_ordinary_lines_untouched():
     assert _neutralize("plain line\nsecond line") == "plain line\nsecond line"
     assert _neutralize("a colon: here and a - dash") == "a colon: here and a - dash"
