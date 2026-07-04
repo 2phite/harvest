@@ -6,11 +6,14 @@ bundle.md is the product (D1): a provenance header (D2) + slide/wall-clock chunk
 
 from __future__ import annotations
 
+import re
 import shutil
 from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+import yaml
 
 from .config import Settings
 from .providers.base import Canonical, SourceMetadata
@@ -30,6 +33,27 @@ def iso_now() -> str:
 def _mmss(seconds: float) -> str:
     s = int(round(seconds))
     return f"{s // 60:02d}:{s % 60:02d}"
+
+
+# Lines whose first non-whitespace content forges harvest's section grammar: a #-run heading,
+# a ---/***/___ thematic break, or a ```/~~~ code fence. bundle.md delimits sections with these
+# markers rather than fenced blocks, so untrusted body text that leads with one could manufacture
+# a fake ## Transcript / ## Danmaku section or close the frontmatter. We backslash-escape the
+# marker so it renders as literal text and no longer matches a structural ^## / ^--- scan.
+_STRUCTURAL_LINE = re.compile(r"^(\s*)(#{1,6}|-{3,}|\*{3,}|_{3,}|`{3,}|~{3,})")
+
+
+def _neutralize(text: str) -> str:
+    """Backslash-escape line-leading structural markdown markers, line by line (so a marker after
+    an embedded newline is caught too). Ordinary prose lines pass through unchanged."""
+    out = []
+    for line in text.split("\n"):
+        m = _STRUCTURAL_LINE.match(line)
+        if m:
+            i = len(m.group(1))
+            line = line[:i] + "\\" + line[i:]
+        out.append(line)
+    return "\n".join(out)
 
 
 @dataclass
@@ -106,33 +130,42 @@ def build_bundle(
 def render_markdown(bundle: Bundle, settings: Settings) -> str:
     t = bundle.transcript
     dur = _mmss(bundle.duration_s) if bundle.duration_s else "?"
+    front = {
+        "platform": bundle.platform,
+        "id": bundle.id,
+        "part": bundle.part,
+        "url": bundle.url,
+        "title": bundle.title or "",
+        "uploader": bundle.uploader or "",
+        "uploader_id": bundle.uploader_id or "",
+        "thumbnail_url": bundle.thumbnail_url or "",
+        "duration": dur,
+        "published_at": bundle.published_at or "",
+        "fetched_at": bundle.fetched_at,
+        "transcript_source": f"{t.source} ({t.source_reason})",
+        "vision_model": bundle.meta.vision_model or "none",
+        "tool_version": bundle.meta.tool_version,
+    }
+    fm = yaml.safe_dump(
+        front, sort_keys=False, allow_unicode=True, default_flow_style=False
+    ).strip()
     lines = [
         "---",
-        f"platform: {bundle.platform}",
-        f"id: {bundle.id}",
-        f"part: {bundle.part}",
-        f"url: {bundle.url}",
-        f"title: {bundle.title or ''}",
-        f"uploader: {bundle.uploader or ''}",
-        f"uploader_id: {bundle.uploader_id or ''}",
-        f"thumbnail_url: {bundle.thumbnail_url or ''}",
-        f"duration: {dur}",
-        f"published_at: {bundle.published_at or ''}",
-        f"fetched_at: {bundle.fetched_at}",
-        f"transcript_source: {t.source} ({t.source_reason})",
-        f"vision_model: {bundle.meta.vision_model or 'none'}",
-        f"tool_version: {bundle.meta.tool_version}",
+        fm,
         "---",
         "",
-        f"# {bundle.title or bundle.id}",
+        f"# {_neutralize(bundle.title or bundle.id)}",
         "",
     ]
 
     if bundle.description:
         lines.append("## Description")
         lines.append("")
-        lines.append(bundle.description)
+        lines.append(_neutralize(bundle.description))
         lines.append("")
+
+    lines.append("## Transcript")
+    lines.append("")
 
     if not t.segments and not bundle.frames:
         lines.append("_(no transcript yet — Whisper pending)_")
@@ -141,15 +174,15 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
     for ch in chunk(
         t.segments, bundle.frames, window_s=settings.chunk_window_s, duration_s=bundle.duration_s
     ):
-        lines.append(f"## [{_mmss(ch.start)}]")
+        lines.append(f"### [{_mmss(ch.start)}]")
         for fr in ch.frames:
             if fr.ocr:
-                lines.append(f"**slide (OCR):** {fr.ocr}")
+                lines.append(f"**slide (OCR):** {_neutralize(fr.ocr)}")
             if fr.caption:
-                lines.append(f"**slide (figure):** {fr.caption}")
+                lines.append(f"**slide (figure):** {_neutralize(fr.caption)}")
         if ch.frames:
             lines.append("")
-        text = "".join(s.text for s in ch.segments).strip()
+        text = _neutralize("".join(s.text for s in ch.segments).strip())
         if text:
             lines.append(text)
         lines.append("")
@@ -176,13 +209,13 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
             ordinary = [ln for ln in w.lines if not ln.high_like]
             for ln in promoted[:HIGH_LIKE_MD_CAP]:
                 suffix = "" if ln.count == 1 else f" ×{ln.count}"
-                lines.append(f"- \U0001F44D 「{ln.text}」{suffix}")
+                lines.append(f"- \U0001F44D 「{_neutralize(ln.text)}」{suffix}")
             promoted_overflow = len(promoted) - HIGH_LIKE_MD_CAP
             if promoted_overflow > 0:
                 lines.append(f"- ﹢{promoted_overflow} more — see bundle.json")
             for ln in ordinary[: settings.danmaku_md_cap]:
                 suffix = "" if ln.count == 1 else f" ×{ln.count}"
-                lines.append(f"- 「{ln.text}」{suffix}")
+                lines.append(f"- 「{_neutralize(ln.text)}」{suffix}")
             ordinary_overflow = len(ordinary) - settings.danmaku_md_cap
             if ordinary_overflow > 0:
                 lines.append(f"- ﹢{ordinary_overflow} more — see bundle.json")

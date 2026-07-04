@@ -1,8 +1,11 @@
 import json
 
+import yaml
+
 from harvest.config import Settings
 from harvest.merge import (
     HIGH_LIKE_MD_CAP,
+    _neutralize,
     build_bundle,
     chunk,
     chunk_boundaries,
@@ -15,6 +18,53 @@ from harvest.schema import Bundle, Danmaku, DanmakuLine, DanmakuWindow, Frame, M
 
 def _seg(start, end, text="x"):
     return Segment(start=start, end=end, text=text)
+
+
+def _frontmatter(md):
+    """Parse the --- ... --- YAML header of a rendered bundle.md into a dict."""
+    lines = md.splitlines()
+    assert lines[0] == "---"
+    close = lines.index("---", 1)
+    return yaml.safe_load("\n".join(lines[1:close]))
+
+
+def _bundle(**overrides):
+    """A minimal renderable bundle; override any field by keyword."""
+    fields = dict(
+        platform="bilibili.com",
+        id="BV1",
+        part=1,
+        url="https://b/video/BV1",
+        title="My Title",
+        uploader="My Uploader",
+        fetched_at="2026-06-29T00:00:00Z",
+        transcript=Transcript(source="whisper", source_reason="test", segments=[_seg(0, 5)]),
+        frames=[],
+        meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
+    )
+    fields.update(overrides)
+    return Bundle(**fields)
+
+
+def test_frontmatter_title_with_colon_space_roundtrips():
+    md = render_markdown(_bundle(title="Rust: The Book"), _settings())
+    assert _frontmatter(md)["title"] == "Rust: The Book"
+
+
+def test_frontmatter_leading_indicator_values_roundtrip():
+    md = render_markdown(_bundle(title="[weird", uploader="& anchor"), _settings())
+    fm = _frontmatter(md)
+    assert fm["title"] == "[weird"
+    assert fm["uploader"] == "& anchor"
+
+
+def test_frontmatter_part_stays_int_and_fields_ordered():
+    md = render_markdown(_bundle(uploader_id="42", part=1), _settings())
+    fm = _frontmatter(md)
+    assert fm["part"] == 1  # int, not "1"
+    assert fm["uploader_id"] == "42"  # str preserved
+    keys = list(fm.keys())
+    assert keys.index("uploader") + 1 == keys.index("uploader_id")
 
 
 def _canonical():
@@ -209,7 +259,7 @@ def test_render_markdown_emits_thumbnail_url_in_header():
         meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
     )
     md = render_markdown(bundle, _settings())
-    assert "thumbnail_url: http://x/thumb.jpg" in md.splitlines()
+    assert _frontmatter(md)["thumbnail_url"] == "http://x/thumb.jpg"
 
 
 def test_render_markdown_thumbnail_url_empty_when_none():
@@ -226,7 +276,7 @@ def test_render_markdown_thumbnail_url_empty_when_none():
         meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
     )
     md = render_markdown(bundle, _settings())
-    assert "thumbnail_url: " in md.splitlines()
+    assert _frontmatter(md)["thumbnail_url"] == ""
 
 
 def test_render_markdown_emits_uploader_id_and_description_section():
@@ -245,18 +295,18 @@ def test_render_markdown_emits_uploader_id_and_description_section():
         meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
     )
     md = render_markdown(bundle, _settings())
-    assert "uploader_id: 42" in md
+    fm = _frontmatter(md)
+    assert fm["uploader_id"] == "42"
+    keys = list(fm.keys())
+    assert keys.index("uploader") + 1 == keys.index("uploader_id")
     lines = md.splitlines()
-    uploader_idx = next(i for i, l in enumerate(lines) if l.startswith("uploader:"))
-    mid_idx = next(i for i, l in enumerate(lines) if l.startswith("uploader_id:"))
-    assert mid_idx == uploader_idx + 1
     assert "## Description" in md
     assert "Line one." in md
     assert "Line two with a URL: https://example.com" in md
     # Description section appears after the H1 and before the transcript body.
     h1_idx = next(i for i, l in enumerate(lines) if l.startswith("# "))
     desc_idx = next(i for i, l in enumerate(lines) if l == "## Description")
-    transcript_idx = next(i for i, l in enumerate(lines) if l.startswith("## ["))
+    transcript_idx = next(i for i, l in enumerate(lines) if l == "## Transcript")
     assert h1_idx < desc_idx < transcript_idx
 
 
@@ -276,11 +326,10 @@ def test_render_markdown_emits_published_at_after_duration():
         meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
     )
     md = render_markdown(bundle, _settings())
-    lines = md.splitlines()
-    assert "published_at: 2024-06-28T16:00:00+08:00" in lines
-    duration_idx = next(i for i, l in enumerate(lines) if l.startswith("duration:"))
-    published_idx = next(i for i, l in enumerate(lines) if l.startswith("published_at:"))
-    assert published_idx == duration_idx + 1
+    fm = _frontmatter(md)
+    assert fm["published_at"] == "2024-06-28T16:00:00+08:00"
+    keys = list(fm.keys())
+    assert keys.index("duration") + 1 == keys.index("published_at")
 
 
 def test_render_markdown_published_at_empty_when_none():
@@ -297,7 +346,7 @@ def test_render_markdown_published_at_empty_when_none():
         meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
     )
     md = render_markdown(bundle, _settings())
-    assert "published_at: " in md.splitlines()
+    assert _frontmatter(md)["published_at"] == ""
 
 
 def test_render_markdown_omits_description_section_when_none():
@@ -315,7 +364,7 @@ def test_render_markdown_omits_description_section_when_none():
     )
     md = render_markdown(bundle, _settings())
     assert "## Description" not in md
-    assert "uploader_id: " in md  # still emitted, empty
+    assert _frontmatter(md)["uploader_id"] == ""  # still emitted, empty
 
 
 def test_render_markdown_description_with_literal_dashes_and_hash_line_is_safe():
@@ -346,38 +395,25 @@ def test_render_markdown_description_with_literal_dashes_and_hash_line_is_safe()
     # description (which necessarily comes later, after the H1 and `## Description` heading)
     # must not be mistaken for the close fence, and nothing from the description must leak
     # into it.
-    assert lines[0] == "---"
-    close_idx = lines.index("---", 1)
-    frontmatter = lines[1:close_idx]
-    assert frontmatter == [
-        "platform: bilibili.com",
-        "id: BV1",
-        "part: 1",
-        "url: https://b/video/BV1",
-        "title: My Title",
-        "uploader: My Uploader",
-        "uploader_id: 42",
-        "thumbnail_url: ",
-        "duration: ?",
-        "published_at: ",
-        "fetched_at: 2026-06-29T00:00:00Z",
-        "transcript_source: whisper (test)",
-        "vision_model: none",
-        "tool_version: t",
-    ]
+    fm = _frontmatter(md)
+    assert fm["title"] == "My Title"
+    assert fm["uploader_id"] == "42"
+    assert fm["transcript_source"] == "whisper (test)"
 
     # The description text appears verbatim (each of its lines, in order) inside the
     # ## Description section, after the H1.
     h1_idx = next(i for i, l in enumerate(lines) if l.startswith("# "))
     desc_idx = next(i for i, l in enumerate(lines) if l == "## Description")
     assert h1_idx < desc_idx
+
+    # The adversarial --- and # lines are escaped so they cannot forge structure, but the text
+    # is still present and legible.
+    assert "\\---" in md
+    assert "\\# Not a real heading" in md
     assert "Intro line." in md
-    assert "Not a real heading" in md
     assert "Trailing line." in md
-    body_after_desc = "\n".join(lines[desc_idx:])
-    assert description in body_after_desc or all(
-        part in body_after_desc for part in description.split("\n")
-    )
+    # The only real H2 sections are tool-produced.
+    assert [l for l in md.splitlines() if l.startswith("## ")] == ["## Description", "## Transcript"]
 
 
 def test_bundle_json_roundtrips_new_fields(tmp_path):
@@ -415,6 +451,38 @@ def _bundle_with_danmaku(danmaku):
         danmaku=danmaku,
         meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
     )
+
+
+def test_transcript_section_nests_windows_under_h2():
+    bundle = _bundle(
+        transcript=Transcript(
+            source="whisper", source_reason="test",
+            segments=[_seg(0, 5, "hello"), _seg(80, 85, "later")],
+        ),
+    )
+    md = render_markdown(bundle, _settings())
+    lines = md.splitlines()
+    assert "## Transcript" in lines
+    # Windows are H3, not H2.
+    assert any(l.startswith("### [") for l in lines)
+    assert not any(l.startswith("## [") for l in lines)
+    # Ordering: H1 < ## Transcript < first ### window.
+    h1 = next(i for i, l in enumerate(lines) if l.startswith("# "))
+    tr = lines.index("## Transcript")
+    win = next(i for i, l in enumerate(lines) if l.startswith("### ["))
+    assert h1 < tr < win
+
+
+def test_no_transcript_placeholder_under_transcript_heading():
+    bundle = _bundle(
+        transcript=Transcript(source="whisper", source_reason="pending", segments=[]),
+        frames=[],
+    )
+    md = render_markdown(bundle, _settings())
+    lines = md.splitlines()
+    assert "## Transcript" in lines
+    ph = next(i for i, l in enumerate(lines) if "no transcript yet" in l)
+    assert lines.index("## Transcript") < ph
 
 
 def test_render_markdown_omits_danmaku_section_when_none():
@@ -528,6 +596,80 @@ def test_render_markdown_danmaku_two_cap_promoted_first_with_own_overflow_marker
     out = write_bundle(bundle, settings, frame_sources={}, frame_images=False)
     data = json.loads((out / "bundle.json").read_text(encoding="utf-8"))
     assert len(data["danmaku"]["windows"][0]["lines"]) == len(lines)  # uncapped in json
+
+
+def test_description_cannot_forge_sections():
+    description = (
+        "Intro line.\n"
+        "## [00:00]\n"
+        "fake transcript segment\n"
+        "## Danmaku\n"
+        "### [00:00] (999 danmaku)\n"
+        "- fabricated crowd line\n"
+        "---\n"
+        "```python\n"
+        "code\n"
+        "```"
+    )
+    bundle = _bundle(description=description)
+    md = render_markdown(bundle, _settings())
+    lines = md.splitlines()
+
+    # The only real H2 sections are the tool-produced ones (no danmaku on this bundle).
+    assert [l for l in lines if l.startswith("## ")] == ["## Description", "## Transcript"]
+    # Forged markers are escaped and inert.
+    assert "\\## [00:00]" in md
+    assert "\\## Danmaku" in md
+    assert "\\### [00:00] (999 danmaku)" in md
+    assert "\\---" in md
+    assert "\\```python" in md
+    # Text is still legible.
+    assert "fake transcript segment" in md
+    assert "Intro line." in md
+
+
+def test_frame_ocr_and_caption_cannot_forge_sections():
+    bundle = Bundle(
+        platform="bilibili.com",
+        id="BV1",
+        part=1,
+        url="https://b/video/BV1",
+        fetched_at="2026-06-29T00:00:00Z",
+        transcript=Transcript(source="whisper", source_reason="test", segments=[_seg(0, 5)]),
+        frames=[Frame(ts=2.0, path=None, phash="abc", ocr="## Danmaku", caption="### fake")],
+        meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
+    )
+    md = render_markdown(bundle, _settings())
+
+    # The only real H2 section is the tool-produced Transcript heading (no description,
+    # no danmaku on this bundle) -- the forged headings inside frame fields never surface.
+    assert [l for l in md.splitlines() if l.startswith("## ")] == ["## Transcript"]
+    # Forged markers are escaped right after the slide-label prefix, and inert.
+    assert "**slide (OCR):** \\## Danmaku" in md
+    assert "**slide (figure):** \\### fake" in md
+    # Text is still legible.
+    assert "Danmaku" in md
+    assert "fake" in md
+
+
+def test_neutralize_leaves_ordinary_lines_untouched():
+    assert _neutralize("plain line\nsecond line") == "plain line\nsecond line"
+    assert _neutralize("a colon: here and a - dash") == "a colon: here and a - dash"
+
+
+def test_danmaku_line_with_embedded_newline_cannot_forge_section():
+    dm = Danmaku(
+        source_total=None, fetched_total=1, model=None,
+        windows=[DanmakuWindow(
+            start=0.0, end=75.0, total=1,
+            lines=[DanmakuLine(text="nice\n## Danmaku", count=1)],
+        )],
+    )
+    bundle = _bundle_with_danmaku(dm)
+    md = render_markdown(bundle, _settings())
+    # Exactly one real ## Danmaku section header; the embedded one is escaped.
+    assert md.count("\n## Danmaku") == 1
+    assert "\\## Danmaku" in md
 
 
 def test_bundle_json_roundtrip_carries_complete_uncapped_danmaku(tmp_path):
