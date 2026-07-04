@@ -9,6 +9,7 @@ from __future__ import annotations
 from urllib.parse import urlparse
 
 from ..config import Settings
+from ..interactions import fetch_interactions
 from ..parts import part_url
 from ..player_api import (
     DanmakuFetch,
@@ -74,6 +75,11 @@ class BilibiliProvider:
         `Provider` Protocol (YouTube has no equivalent). Thin delegation to
         `player_api.fetch_danmaku`; see there for the not-found/empty-result convention."""
         return fetch_danmaku(canonical, settings, opener=opener, view=view)
+
+    def fetch_interactions(self, canonical, settings, *, opener=None, view=None):
+        """Command-danmaku (投票/评分) acquisition. Thin passthrough to
+        `interactions.fetch_interactions`; see there for the empty-result-never-raises convention."""
+        return fetch_interactions(canonical, settings, opener=opener, view=view)
 
     def _part1_segments(self, canonical, settings):
         """#6357 tier-2 input: part 1's subtitle, fetched only for part>1. Best-effort — a

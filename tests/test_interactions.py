@@ -159,3 +159,20 @@ def test_fetch_interactions_no_cid_returns_empty():
     empty_view = ViewData(aid=None, cid=None, duration=600)
     result = fetch_interactions(canonical, Settings(), opener=_FakeOpener({}), view=empty_view)
     assert result == Interactions()
+
+
+def test_bilibili_provider_fetch_interactions_passthrough():
+    from harvest.providers.bilibili import BilibiliProvider
+    from tests.test_interactions_proto import _command_dm
+
+    canonical = Canonical(platform="bilibili.com", id="BV1x", part=1, url="u")
+    body = b"".join(
+        [__import__("tests.test_interactions_proto", fromlist=["_ld"])._ld(
+            9, _command_dm(command="#GRADE#", content="g", progress_ms=None,
+                           extra=_GRADE_EXTRA, id_str="1"))]
+    )
+    opener = _FakeOpener({_cmd_url(888, 999): body})
+    result = BilibiliProvider().fetch_interactions(
+        canonical, Settings(), opener=opener, view=_view()
+    )
+    assert result.grades == [Grade(avg_score=9.9, count=178)]
