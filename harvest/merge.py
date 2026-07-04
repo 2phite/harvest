@@ -17,7 +17,7 @@ import yaml
 
 from .config import Settings
 from .providers.base import Canonical, SourceMetadata
-from .schema import Bundle, Danmaku, Frame, Meta, Segment, Stats, Transcript
+from .schema import Bundle, Danmaku, Frame, Interactions, Meta, Segment, Stats, Transcript
 
 # The ordinary per-window danmaku cap for bundle.md lives in Settings.danmaku_md_cap
 # (env HARVEST_DANMAKU_MD_CAP) -- a tunable gestalt-sample dial. bundle.json is always complete.
@@ -120,6 +120,7 @@ def build_bundle(
     *,
     vision_model: str | None = None,
     danmaku: Danmaku | None = None,
+    interactions: Interactions | None = None,
 ) -> Bundle:
     return Bundle(
         platform=canonical.platform, id=canonical.id, part=canonical.part, url=canonical.url,
@@ -132,6 +133,7 @@ def build_bundle(
             reply_count=meta.reply_count, danmaku_count=meta.danmaku_count,
         ),
         fetched_at=iso_now(), transcript=transcript, frames=frames, danmaku=danmaku,
+        interactions=interactions,
         meta=Meta(
             cookies_used=bool(settings.sessdata or settings.cookies_browser),
             referer_used=(canonical.platform == "bilibili.com"),
@@ -234,6 +236,32 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
             ordinary_overflow = ordinary_total - settings.danmaku_md_cap
             if ordinary_overflow > 0:
                 lines.append(f"- ﹢{ordinary_overflow} more — see bundle.json")
+            lines.append("")
+
+    it = bundle.interactions
+    if it and (it.votes or it.grades):
+        lines.append("## Interactions")
+        lines.append(
+            "_uploader-initiated widgets (below transcript authority). "
+            "grades = crowd 0–10 average; votes = uploader question + crowd tallies._"
+        )
+        lines.append("")
+        # Grades first (video-level reception summary; no timeline anchor).
+        for g in it.grades:
+            lines.append(f"### 评分 (grade)")
+            lines.append(f"- avg {g.avg_score:g} / 10 over {g.count} raters")
+            lines.append("")
+        # Votes next, ordered by timeline anchor (ts); unanchored votes (ts is None) sort last.
+        for v in sorted(it.votes, key=lambda v: (v.ts is None, v.ts or 0.0)):
+            head = "### "
+            if v.ts is not None:
+                head += f"[{_mmss(v.ts)}] "
+            head += f"投票 (vote): {_neutralize(v.question)}"
+            lines.append(head)
+            for opt in v.options:
+                marker = " (write-in)" if opt.write_in else ""
+                lines.append(f"- {_neutralize(opt.text)}{marker} — {opt.count}")
+            lines.append(f"_{v.total_count} votes total_")
             lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
