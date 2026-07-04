@@ -420,6 +420,12 @@ def test_danmaku_line_high_like_defaults_false():
     assert promoted.high_like is True
 
 
+def test_danmakuline_author_field_defaults_none_and_accepts_roles():
+    assert DanmakuLine(text="x").author is None
+    assert DanmakuLine(text="x", author="owner").author == "owner"
+    assert DanmakuLine(text="x", author="staff").author == "staff"
+
+
 def test_represent_danmaku_extracts_high_like_verbatim_before_clustering(tmp_path):
     # A promoted (high_like) danmaku whose text is byte-identical to an ordinary flood must
     # still appear as its OWN high_like=True line -- the flood clusters separately from it, and
