@@ -46,11 +46,15 @@ def _encode_ld_field(field: int, data: bytes) -> bytes:
     return _encode_tag(field, 2) + _encode_varint(len(data)) + data
 
 
-def _encode_elem(*, progress_ms: int, content: str, attr: int | None) -> bytes:
+def _encode_elem(
+    *, progress_ms: int, content: str, attr: int | None, mid_hash: str | None = None
+) -> bytes:
     """One `DanmakuElem` body: `progress`(2, varint) + `content`(7, length-delimited)
-    [+ `attr`(13, varint) when not None -- omitting it models a real elem with no attr field]."""
+    [+ `midHash`(6, length-delimited) when given] [+ `attr`(13, varint) when not None]."""
     buf = bytearray()
     buf += _encode_varint_field(2, progress_ms)
+    if mid_hash is not None:
+        buf += _encode_ld_field(6, mid_hash.encode("utf-8"))
     buf += _encode_ld_field(7, content.encode("utf-8"))
     if attr is not None:
         buf += _encode_varint_field(13, attr)
@@ -111,3 +115,18 @@ def test_decode_seg_non_protobuf_json_error_body_returns_empty_list():
     byte offsets protobuf expects -- `decode_seg` must degrade to an empty list, not raise, so
     `fetch_danmaku` can treat it as a pagination-terminating signal."""
     assert decode_seg(b'{"code":-352,"message":"risk control"}') == []
+
+
+def test_decode_seg_recovers_mid_hash_field6():
+    # A DanmakuElem carrying midHash(6) -> RawDanmaku.mid_hash holds it verbatim.
+    body = _encode_seg([
+        _encode_elem(progress_ms=1000, content="hi", attr=None, mid_hash="e6c5b7f0"),
+    ])
+    records = decode_seg(body)
+    assert len(records) == 1
+    assert records[0].mid_hash == "e6c5b7f0"
+
+
+def test_decode_seg_mid_hash_absent_defaults_to_empty_string():
+    body = _encode_seg([_encode_elem(progress_ms=1000, content="hi", attr=None)])
+    assert decode_seg(body)[0].mid_hash == ""
