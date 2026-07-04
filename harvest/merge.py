@@ -248,7 +248,7 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
         lines.append("")
         # Grades first (video-level reception summary; no timeline anchor).
         for g in it.grades:
-            lines.append(f"### 评分 (grade)")
+            lines.append("### 评分 (grade)")
             lines.append(f"- avg {g.avg_score:g} / 10 over {g.count} raters")
             lines.append("")
         # Votes next, ordered by timeline anchor (ts); unanchored votes (ts is None) sort last.
