@@ -24,3 +24,20 @@ def test_live_youtube_metadata_and_subtitle():
     # Probe showed language None + empty subtitles -> Whisper path (None). Tolerate either.
     got = p.fetch_subtitle(canonical, Settings(), meta)
     assert got is None or (got.accepted and got.source == "human-sub" and isinstance(got.segments, list))
+
+
+# A public lecture with NO human captions but an English auto-caption — exercises the auto-sub tier.
+_LIVE_AUTO_URL = "https://www.youtube.com/watch?v=-QFHIoCo-Ko"
+
+
+@pytest.mark.live
+def test_live_youtube_auto_caption_accepted():
+    p = YouTubeProvider()
+    canonical = p.resolve(_LIVE_AUTO_URL)
+    meta = p.fetch_metadata(canonical, Settings())
+    got = p.fetch_subtitle(canonical, Settings(), meta)
+    assert got is not None and got.accepted is True
+    assert got.source == "auto-sub" and got.language == "en"
+    # De-rolling worked: no rolling-duplicate explosion, no leftover <c> word-timing tags.
+    assert len(got.segments) < meta.duration_s          # far fewer cues than seconds
+    assert all("<c>" not in s.text for s in got.segments)
