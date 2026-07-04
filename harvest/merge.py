@@ -54,15 +54,18 @@ def _neutralize(text: str) -> str:
 
 
 def _line_pills(line) -> str:
-    """Elevation-pill prefix for a danmaku line: 👍 (high_like) then UP主/合作 (author), space-joined
-    with a trailing space. Empty string for an ordinary crowd line."""
+    """Pill prefix for a danmaku line: 👍 (high_like) then UP主?/合作? (author), space-joined with a
+    trailing space. Empty string for an ordinary crowd line. The author pills carry a trailing `?`
+    deliberately: `author` is a crc32 poster-hash match, and bilibili does not expose the true
+    sender, so the match is UNVERIFIED (may be a hash collision) — the `?` keeps a scanning reader
+    from reading it as a confirmed UP主/合作 post. 👍 has no `?`: it is a reliable platform flag."""
     pills: list[str] = []
     if line.high_like:
         pills.append("\U0001F44D")
     if line.author == "owner":
-        pills.append("UP主")
+        pills.append("UP主?")
     elif line.author == "staff":
-        pills.append("合作")
+        pills.append("合作?")
     return (" ".join(pills) + " ") if pills else ""
 
 
@@ -202,12 +205,12 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
         lines.append("## Danmaku")
         note = f"_crowd track (lower authority than transcript) — fetched {dm.fetched_total}"
         if dm.source_total is not None:
-            note += f" of {dm.source_total}"
+            note += f" of {dm.source_total} ever posted"
         if dm.model:
             note += f" · {dm.model}"
         note += (
-            ". Lines pilled \U0001F44D/UP主/合作 rank above the crowd "
-            "(platform / video-author signals)._"
+            ". \U0001F44D = bilibili 高赞 (platform-promoted; reliable). "
+            "UP主?/合作? = possibly from the video author, unverified — not authoritative._"
         )
         lines.append(note)
         lines.append("")
