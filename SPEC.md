@@ -212,13 +212,17 @@ Trimmed fixtures seeding the four YouTube branches live in `tests/fixtures/youtu
 - **CLI verb grammar.** `harvest <verb> <url>`: `ingest` (full pipeline), `probe` (cheap metadata, no
   media). No bare-url form. Scales to future verbs (`collect`, …) and sources.
 - **Danmaku acquisition = the protobuf census endpoint (`seg.so`), not WBI-signed sampling.**
-  `fetched_total` is a near-complete pull (~90–94% of `source_total`; the gap is deleted/shielded
-  danmaku, not a sample cut short). Two per-line *elevated* signals ride the same census, extracted
-  verbatim before clustering: `DanmakuLine.high_like` (bilibili's own 高赞 platform-promotion flag)
-  and `DanmakuLine.author` (`"owner"`/`"staff"` — a UP主 or 合作 author danmaku, crc32-matched off the
-  poster hash against the view response's author mids, no extra fetch). Both rank above the crowd
-  mirror. See PROTOCOL.md for the full contract and `bundle.md`'s single-pass chronological rendering
-  (elevated lines pilled `👍`/`UP主`/`合作` and never dropped; only the ordinary flood is capped).
+  `fetched_total` is the currently-live danmaku the census returns, `≤ source_total` by nature —
+  `source_total` (bilibili's `stat.danmaku`) is a cumulative lifetime count, not the live pool, so
+  the gap is lifetime attrition (deleted/expired danmaku), not a sample cut short. Two per-line
+  *elevated* signals ride the same census, extracted
+  verbatim before clustering: `DanmakuLine.high_like` (bilibili's own 高赞 platform-promotion flag,
+  reliable) and `DanmakuLine.author` (`"owner"`/`"staff"` — a *suspected* UP主 or 合作 author danmaku,
+  crc32-matched off the poster hash against the view response's author mids, no extra fetch). Only
+  `high_like` ranks above the crowd; `author` is an UNVERIFIED hash match (bilibili exposes no true
+  sender, so it may be a collision — empirically confirmed) and is a weak hint, not authoritative.
+  See PROTOCOL.md for the full contract and `bundle.md`'s single-pass chronological rendering (marked
+  lines pilled `👍`/`UP主?`/`合作?` and never dropped; only the ordinary flood is capped).
 
 ## 9. Repository layout (target)
 

@@ -112,9 +112,11 @@ class DanmakuLine(BaseModel):
     count: int = 1
     high_like: bool = False  # bilibili 高赞 / platform-promoted -- extracted verbatim BEFORE
     # clustering (never absorbed into a flood's count), never LLM-decided (Task 2)
-    author: Literal["owner", "staff"] | None = None  # video author of this line: "owner" (UP主) or
-    # "staff" (合作 co-author), crc32-matched off the poster hash BEFORE clustering; None = organic
-    # crowd. Higher authority than the surrounding crowd mirror (see PROTOCOL.md authority carve-out).
+    author: Literal["owner", "staff"] | None = None  # SUSPECTED video author of this line: "owner"
+    # (UP主) or "staff" (合作 co-author), crc32-matched off the poster hash (midHash) BEFORE
+    # clustering; None = organic crowd. UNVERIFIED: midHash is a lossy 32-bit crc32 and bilibili
+    # exposes no true-sender API, so a match may be a hash collision (empirically confirmed on real
+    # videos). Treat as a weak hint, NOT authoritative author content (see PROTOCOL.md carve-out).
 
 
 class DanmakuWindow(BaseModel):
@@ -135,8 +137,8 @@ class Danmaku(BaseModel):
     on a supporting platform (else Bundle.danmaku is null). bundle.json is the COMPLETE record;
     bundle.md may cap per window with a '+N more' marker (read this JSON for the full set)."""
 
-    source_total: int | None = None  # platform-reported total (stat.danmaku)
-    fetched_total: int  # how many actually pulled (census, deletion gap possible)
+    source_total: int | None = None  # bilibili stat.danmaku: cumulative lifetime, not live pool
+    fetched_total: int  # census pull = currently-live danmaku; ≤ source_total by nature
     model: str | None = None  # the LLM that produced this representation (provenance)
     windows: list[DanmakuWindow] = Field(default_factory=list)
 

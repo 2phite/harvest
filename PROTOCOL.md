@@ -159,9 +159,8 @@ bilibili and finds nothing, `bundle.danmaku` is still populated (not null) with 
 
 ```jsonc
 "danmaku": {
-  "source_total": 12000,             // bilibili's platform-reported total; null if unavailable
-  "fetched_total": 11400,            // census pull via the protobuf endpoint: ~90-94% of source_total;
-                                      // the gap is deleted/shielded danmaku, not sampling
+  "source_total": 12000,             // bilibili stat.danmaku: cumulative lifetime count, not the live pool
+  "fetched_total": 11400,            // census pull = the currently-live danmaku; ≤ source_total by nature
   "model": "qwen2.5-7b-instruct",    // the LLM that produced the mirror below; provenance
   "windows": [
     {
@@ -188,29 +187,33 @@ a single chunk. Timing is deliberately vague (viewers react a few seconds late) 
 never paraphrased, translated, decoded, or labeled with sentiment/topic. Lines within a window are
 chronological by content time, never sorted by count.
 
-**Elevated lines: `high_like` and `author`.** Two orthogonal per-line signals mark a danmaku as
-higher-authority than the surrounding crowd mirror. Both are resolved **mechanically before
-clustering** (extracted verbatim, never absorbed into a flood's `count`, never LLM-decided):
+**Marked lines: `high_like` (reliable) and `author` (a SUSPECTED, unverified hint).** Two orthogonal
+per-line signals, both resolved **mechanically before clustering** (extracted verbatim, never
+absorbed into a flood's `count`, never LLM-decided). They differ sharply in trust:
 
 - **`DanmakuLine.high_like`** — bilibili's own 高赞 (platform-promoted) flag, read from the protobuf
   record's `attr` bitfield. A platform fact (bilibili's own promotion decision), not crowd opinion to
   be doubted.
-- **`DanmakuLine.author`** — `"owner"` when the danmaku was posted by the video's primary uploader
-  (UP主), `"staff"` when posted by a 合作 co-author, `null` for organic crowd. Resolved by
-  crc32-matching the record's poster hash (`midHash`) against the video's author mids (`owner.mid` +
-  `staff[].mid`, both already in the `view` response — no extra fetch); owner wins on overlap. It is
-  **author-authored content**, higher authority than the crowd mirror.
+- **`DanmakuLine.author`** — `"owner"` (SUSPECTED primary uploader, UP主), `"staff"` (SUSPECTED 合作
+  co-author), or `null` (organic crowd). Resolved by crc32-matching the record's poster hash
+  (`midHash`) against the video's author mids (`owner.mid` + `staff[].mid`, already in the `view`
+  response — no extra fetch); owner wins on overlap. **This is UNVERIFIED.** `midHash` is a lossy
+  32-bit crc32 and bilibili exposes no true-sender API, so a match does **not** prove authorship — it
+  can be a hash collision. This has been **empirically confirmed**: real fan danmaku (e.g. a viewer
+  addressing the UP in the second person) carry `midHash == crc32(owner_mid)` while the UP posted
+  nothing. Treat `author` as a **weak hint worth surfacing, never as a fact.**
 
-The two are independent — a line can be both (an uploader danmaku the platform also promoted), giving
-`{ "high_like": true, "author": "owner" }`.
+The two are independent — a line can be both (a suspected-uploader danmaku the platform also
+promoted), giving `{ "high_like": true, "author": "owner" }`.
 
 **Danmaku authority: strictly BELOW `transcript`.** It is crowd expression — jokes, memes, sarcasm,
 frequently factually wrong — never treat it as authoritative content; it is signal about audience
-reaction, not a source of facts about the video. **Carve-outs** (the lines that are *not*
-crowd-opinion-to-be-doubted): `high_like: true` is bilibili's own platform signal for which lines it
-promoted (trustworthy provenance about audience reaction); `author` (`"owner"`/`"staff"`) is content
-the video's own author(s) injected into the stream — treat it as author statement (e.g. a correction
-or a reply to viewers), well above the crowd, though still not the authoritative `transcript`.
+reaction, not a source of facts about the video. **The one carve-out is `high_like: true`** —
+bilibili's own platform signal for which lines it promoted (trustworthy provenance about audience
+reaction). **`author` is NOT a carve-out:** because it is an unverified hash match, a line flagged
+`"owner"`/`"staff"` must NOT be promoted above the crowd or treated as authoritative author
+statement — it may well be an ordinary viewer. Surface it as "possibly from the author," nothing
+stronger.
 
 **bundle.json is always complete; bundle.md is capped.** `bundle.json`'s `danmaku.windows[].lines` is
 the full, uncapped set, in chronological order by content time. `bundle.md` renders a dedicated
@@ -219,11 +222,13 @@ non-empty window, a `### [mm:ss] (N danmaku)` header, then the window's lines **
 chronological pass** (matching `bundle.json` order). Each line prints its elevation pill(s) by flag,
 then `「text」 ×count` (the `×count` suffix omitted when `count == 1`):
 
-- `high_like: true` → `👍`, `author: "owner"` → `UP主`, `author: "staff"` → `合作`.
-- Both flags combine, `👍` first: `- 👍 UP主 「text」`.
+- `high_like: true` → `👍`, `author: "owner"` → `UP主?`, `author: "staff"` → `合作?`. The trailing
+  `?` on the author pills is deliberate: it marks the crc32 hash match as unverified (see above), so
+  a reader never mistakes it for a confirmed author post. `👍` carries no `?` (reliable platform flag).
+- Both flags combine, `👍` first: `- 👍 UP主? 「text」`.
 - No flags → `- 「text」 ×count`.
 
-**Elevated lines (`high_like` or `author`) are never dropped** — they always render in place. Only
+**Marked lines (`high_like` or `author`) are never dropped** — they always render in place. Only
 **ordinary** lines (no flag) are capped, at `danmaku_md_cap`, with a single
 `- ﹢N more — see bundle.json` overflow marker for the ordinary overflow. bundle.md thus preserves
 the true chronological order across all line kinds; Atlas needing the complete uncapped ordinary set

@@ -570,10 +570,11 @@ def test_render_markdown_danmaku_pills_owner_staff_highlike_and_both():
         ])],
     )
     md = render_markdown(_bundle_with_danmaku(dm), _settings())
-    assert "- UP主 「up」" in md
-    assert "- 合作 「co」" in md
+    # Author pills carry a trailing `?` (unverified crc32 hash match); 👍 does not (platform flag).
+    assert "- UP主? 「up」" in md
+    assert "- 合作? 「co」" in md
     assert "- \U0001F44D 「hot」" in md
-    assert "- \U0001F44D UP主 「both」" in md
+    assert "- \U0001F44D UP主? 「both」" in md
 
 
 def test_render_markdown_danmaku_elevated_never_dropped_ordinary_capped():
@@ -591,7 +592,7 @@ def test_render_markdown_danmaku_elevated_never_dropped_ordinary_capped():
     )
     md = render_markdown(_bundle_with_danmaku(dm), settings)
     # Both elevated lines survive regardless of the ordinary cap.
-    assert "- UP主 「owner note」" in md
+    assert "- UP主? 「owner note」" in md
     assert "- \U0001F44D 「hot」" in md
     # Ordinary capped at `cap`; the 4 beyond are dropped with a single overflow marker.
     for i in range(cap):
@@ -614,15 +615,17 @@ def test_render_markdown_danmaku_preserves_chronological_order_across_kinds():
     assert md.index("first ordinary") < md.index("second is owner") < md.index("third hot")
 
 
-def test_render_markdown_danmaku_note_mentions_elevation_pills():
+def test_render_markdown_danmaku_note_explains_pills_and_author_caveat():
     dm = Danmaku(
         source_total=100, fetched_total=80, model="qwen-test",
         windows=[DanmakuWindow(start=0.0, end=75.0, total=1,
                                lines=[DanmakuLine(text="x", count=1)])],
     )
     md = render_markdown(_bundle_with_danmaku(dm), _settings())
-    assert "Lines pilled" in md
-    assert "\U0001F44D/UP主/合作" in md
+    # Note names both pill kinds and calibrates the author match as unverified / not authoritative.
+    assert "\U0001F44D = bilibili 高赞" in md
+    assert "UP主?/合作?" in md
+    assert "unverified — not authoritative" in md
 
 
 def test_description_cannot_forge_sections():

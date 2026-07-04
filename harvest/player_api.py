@@ -251,9 +251,10 @@ _API_DANMAKU_SEG = "https://api.bilibili.com/x/v2/dm/web/seg.so?type=1&oid={cid}
 class DanmakuFetch:
     """Result of a danmaku acquisition attempt: `source_total` is bilibili's platform-reported
     count (`ViewData.danmaku_count`, may be `None` if unavailable), `fetched_total` is how many
-    records this fetch actually got (`len(records)`). No `sampled` flag: the census's only gap
-    vs. `source_total` is the small delete-before-fetch window, not a server-side sampling cap --
-    `source_total` and `fetched_total` together already tell that story honestly."""
+    records this fetch actually got (`len(records)`). No `sampled` flag: the census returns the
+    currently-live danmaku, so `fetched_total <= source_total` by nature -- `source_total` is a
+    cumulative lifetime count (not the live pool), so the gap is lifetime attrition, not
+    sampling."""
 
     source_total: int | None
     fetched_total: int

@@ -42,25 +42,32 @@ _Avoid_: "analyze" (say caption); conflating "OCR" (text only) with the whole ca
 Umbrella (by *intent*, not by mechanism) for signals a video's **author(s)** inject into the
 viewing experience. The members below are mechanically unrelated — some are ordinary danmaku,
 another is not danmaku at all — and share only that a video author (not the organic crowd) authored
-them, giving them higher authority than organic crowd expression.
+them, which *would* give them higher authority than organic crowd expression — but only insofar as
+we can actually confirm the authorship (see each member; the crc32 author-danmaku match cannot).
 
-**Author danmaku**:
-Collective term for a danmaku posted by a video author rather than an organic viewer — either a
-**UP主 danmaku** (primary owner) or a **Collaborator danmaku** (a 合作 staff member). Detected
-mechanically off the census stream by crc32-matching the danmaku's poster hash against the video's
-author mids; carries higher authority than the surrounding crowd mirror. Orthogonal to `high_like`
-(one danmaku can be both).
+**Author danmaku** (SUSPECTED):
+Collective term for a danmaku *believed* to be posted by a video author rather than an organic
+viewer — either a **UP主 danmaku** (primary owner) or a **Collaborator danmaku** (a 合作 staff
+member). Detected mechanically off the census stream by crc32-matching the danmaku's poster hash
+(`midHash`) against the video's author mids. **This is an unverified hint, not a fact:** `midHash` is
+a lossy 32-bit crc32 and bilibili exposes no true-sender API, so a match can be a hash collision —
+empirically confirmed (real fan danmaku carry `crc32(owner_mid)` while the UP posted nothing). So it
+does NOT carry author authority; surface it as "possibly from the author," never as certainty.
+Orthogonal to `high_like` (one danmaku can be both; `high_like` is the reliable one).
 
 **UP主 danmaku** (uploader danmaku):
-An **Author danmaku** posted by the video's own primary uploader (`owner.mid`); the bilibili client
-marks it with a solid pink "UP主" pill. It rides the **Danmaku track** like any other danmaku.
-_Avoid_: "official danmaku", "pinned danmaku"; do NOT confuse with **Command danmaku**.
+An **Author danmaku** *suspected* to be posted by the video's own primary uploader (`owner.mid`).
+When the bilibili client itself recognizes one it marks it with a solid pink "UP主" pill — but our
+crc32 match cannot reproduce that recognition reliably, so we render an unverified `UP主?` pill. It
+rides the **Danmaku track** like any other danmaku. _Avoid_: "official danmaku", "pinned danmaku";
+do NOT confuse with **Command danmaku**.
 
 **Collaborator danmaku** (合作):
-An **Author danmaku** posted by a co-author / staff member of a collaborative (合作) video — an
-account in the video's `staff` list other than the primary owner. Same authority carve-out as a
-**UP主 danmaku**; distinguished only by *which* author posted it, rendered with a "合作" pill.
-_Avoid_: "UP主 danmaku" (that term is the primary owner specifically).
+An **Author danmaku** *suspected* to be posted by a co-author / staff member of a collaborative (合作)
+video — an account in the video's `staff` list other than the primary owner. Same unverified-hash
+caveat as a **UP主 danmaku** (and note the bilibili client does not even badge staff danmaku, so
+these are unverifiable by eye); distinguished only by *which* author mid it matched, rendered with a
+`合作?` pill. _Avoid_: "UP主 danmaku" (that term is the primary owner specifically).
 
 **Command danmaku** (互动弹幕 / interactive danmaku):
 Structured interactive widgets the uploader places on the timeline — **not** scrolling text and
