@@ -39,17 +39,28 @@ _Avoid_: "analyze" (say caption); conflating "OCR" (text only) with the whole ca
 
 ## Uploader-initiated interactions
 
-Umbrella (by *intent*, not by mechanism) for signals the **uploader (UP主)** injects into the
-viewing experience. The two members below are mechanically unrelated — one is an ordinary danmaku,
-the other is not danmaku at all — and share only that the UP主 authored them, giving them higher
-authority than organic crowd expression.
+Umbrella (by *intent*, not by mechanism) for signals a video's **author(s)** inject into the
+viewing experience. The members below are mechanically unrelated — some are ordinary danmaku,
+another is not danmaku at all — and share only that a video author (not the organic crowd) authored
+them, giving them higher authority than organic crowd expression.
+
+**Author danmaku**:
+Collective term for a danmaku posted by a video author rather than an organic viewer — either a
+**UP主 danmaku** (primary owner) or a **Collaborator danmaku** (a 合作 staff member). Detected
+mechanically off the census stream by crc32-matching the danmaku's poster hash against the video's
+author mids; carries higher authority than the surrounding crowd mirror. Orthogonal to `high_like`
+(one danmaku can be both).
 
 **UP主 danmaku** (uploader danmaku):
-An ordinary danmaku that happens to be posted by the video's own uploader; the bilibili client
-marks it with a solid pink "UP主" pill prefixed to the comment body. It rides the **Danmaku track**
-like any other danmaku — a per-danmaku property, orthogonal to `high_like` (one danmaku can be
-both; the only two prefix pills the client shows are 👍 and UP主).
+An **Author danmaku** posted by the video's own primary uploader (`owner.mid`); the bilibili client
+marks it with a solid pink "UP主" pill. It rides the **Danmaku track** like any other danmaku.
 _Avoid_: "official danmaku", "pinned danmaku"; do NOT confuse with **Command danmaku**.
+
+**Collaborator danmaku** (合作):
+An **Author danmaku** posted by a co-author / staff member of a collaborative (合作) video — an
+account in the video's `staff` list other than the primary owner. Same authority carve-out as a
+**UP主 danmaku**; distinguished only by *which* author posted it, rendered with a "合作" pill.
+_Avoid_: "UP主 danmaku" (that term is the primary owner specifically).
 
 **Command danmaku** (互动弹幕 / interactive danmaku):
 Structured interactive widgets the uploader places on the timeline — **not** scrolling text and
