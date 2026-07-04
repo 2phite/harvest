@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 from .config import Settings
 from .providers.base import Canonical, SourceMetadata
 from .schema import Bundle, Danmaku, Frame, Meta, Segment, Stats, Transcript
@@ -106,22 +108,28 @@ def build_bundle(
 def render_markdown(bundle: Bundle, settings: Settings) -> str:
     t = bundle.transcript
     dur = _mmss(bundle.duration_s) if bundle.duration_s else "?"
+    front = {
+        "platform": bundle.platform,
+        "id": bundle.id,
+        "part": bundle.part,
+        "url": bundle.url,
+        "title": bundle.title or "",
+        "uploader": bundle.uploader or "",
+        "uploader_id": bundle.uploader_id or "",
+        "thumbnail_url": bundle.thumbnail_url or "",
+        "duration": dur,
+        "published_at": bundle.published_at or "",
+        "fetched_at": bundle.fetched_at,
+        "transcript_source": f"{t.source} ({t.source_reason})",
+        "vision_model": bundle.meta.vision_model or "none",
+        "tool_version": bundle.meta.tool_version,
+    }
+    fm = yaml.safe_dump(
+        front, sort_keys=False, allow_unicode=True, default_flow_style=False
+    ).strip()
     lines = [
         "---",
-        f"platform: {bundle.platform}",
-        f"id: {bundle.id}",
-        f"part: {bundle.part}",
-        f"url: {bundle.url}",
-        f"title: {bundle.title or ''}",
-        f"uploader: {bundle.uploader or ''}",
-        f"uploader_id: {bundle.uploader_id or ''}",
-        f"thumbnail_url: {bundle.thumbnail_url or ''}",
-        f"duration: {dur}",
-        f"published_at: {bundle.published_at or ''}",
-        f"fetched_at: {bundle.fetched_at}",
-        f"transcript_source: {t.source} ({t.source_reason})",
-        f"vision_model: {bundle.meta.vision_model or 'none'}",
-        f"tool_version: {bundle.meta.tool_version}",
+        fm,
         "---",
         "",
         f"# {bundle.title or bundle.id}",

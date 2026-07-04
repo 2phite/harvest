@@ -1,5 +1,7 @@
 import json
 
+import yaml
+
 from harvest.config import Settings
 from harvest.merge import (
     HIGH_LIKE_MD_CAP,
@@ -15,6 +17,53 @@ from harvest.schema import Bundle, Danmaku, DanmakuLine, DanmakuWindow, Frame, M
 
 def _seg(start, end, text="x"):
     return Segment(start=start, end=end, text=text)
+
+
+def _frontmatter(md):
+    """Parse the --- ... --- YAML header of a rendered bundle.md into a dict."""
+    lines = md.splitlines()
+    assert lines[0] == "---"
+    close = lines.index("---", 1)
+    return yaml.safe_load("\n".join(lines[1:close]))
+
+
+def _bundle(**overrides):
+    """A minimal renderable bundle; override any field by keyword."""
+    fields = dict(
+        platform="bilibili.com",
+        id="BV1",
+        part=1,
+        url="https://b/video/BV1",
+        title="My Title",
+        uploader="My Uploader",
+        fetched_at="2026-06-29T00:00:00Z",
+        transcript=Transcript(source="whisper", source_reason="test", segments=[_seg(0, 5)]),
+        frames=[],
+        meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
+    )
+    fields.update(overrides)
+    return Bundle(**fields)
+
+
+def test_frontmatter_title_with_colon_space_roundtrips():
+    md = render_markdown(_bundle(title="Rust: The Book"), _settings())
+    assert _frontmatter(md)["title"] == "Rust: The Book"
+
+
+def test_frontmatter_leading_indicator_values_roundtrip():
+    md = render_markdown(_bundle(title="[weird", uploader="& anchor"), _settings())
+    fm = _frontmatter(md)
+    assert fm["title"] == "[weird"
+    assert fm["uploader"] == "& anchor"
+
+
+def test_frontmatter_part_stays_int_and_fields_ordered():
+    md = render_markdown(_bundle(uploader_id="42", part=1), _settings())
+    fm = _frontmatter(md)
+    assert fm["part"] == 1  # int, not "1"
+    assert fm["uploader_id"] == "42"  # str preserved
+    keys = list(fm.keys())
+    assert keys.index("uploader") + 1 == keys.index("uploader_id")
 
 
 def _canonical():
@@ -209,7 +258,7 @@ def test_render_markdown_emits_thumbnail_url_in_header():
         meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
     )
     md = render_markdown(bundle, _settings())
-    assert "thumbnail_url: http://x/thumb.jpg" in md.splitlines()
+    assert _frontmatter(md)["thumbnail_url"] == "http://x/thumb.jpg"
 
 
 def test_render_markdown_thumbnail_url_empty_when_none():
@@ -226,7 +275,7 @@ def test_render_markdown_thumbnail_url_empty_when_none():
         meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
     )
     md = render_markdown(bundle, _settings())
-    assert "thumbnail_url: " in md.splitlines()
+    assert _frontmatter(md)["thumbnail_url"] == ""
 
 
 def test_render_markdown_emits_uploader_id_and_description_section():
@@ -245,11 +294,11 @@ def test_render_markdown_emits_uploader_id_and_description_section():
         meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
     )
     md = render_markdown(bundle, _settings())
-    assert "uploader_id: 42" in md
+    fm = _frontmatter(md)
+    assert fm["uploader_id"] == "42"
+    keys = list(fm.keys())
+    assert keys.index("uploader") + 1 == keys.index("uploader_id")
     lines = md.splitlines()
-    uploader_idx = next(i for i, l in enumerate(lines) if l.startswith("uploader:"))
-    mid_idx = next(i for i, l in enumerate(lines) if l.startswith("uploader_id:"))
-    assert mid_idx == uploader_idx + 1
     assert "## Description" in md
     assert "Line one." in md
     assert "Line two with a URL: https://example.com" in md
@@ -276,11 +325,10 @@ def test_render_markdown_emits_published_at_after_duration():
         meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
     )
     md = render_markdown(bundle, _settings())
-    lines = md.splitlines()
-    assert "published_at: 2024-06-28T16:00:00+08:00" in lines
-    duration_idx = next(i for i, l in enumerate(lines) if l.startswith("duration:"))
-    published_idx = next(i for i, l in enumerate(lines) if l.startswith("published_at:"))
-    assert published_idx == duration_idx + 1
+    fm = _frontmatter(md)
+    assert fm["published_at"] == "2024-06-28T16:00:00+08:00"
+    keys = list(fm.keys())
+    assert keys.index("duration") + 1 == keys.index("published_at")
 
 
 def test_render_markdown_published_at_empty_when_none():
@@ -297,7 +345,7 @@ def test_render_markdown_published_at_empty_when_none():
         meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
     )
     md = render_markdown(bundle, _settings())
-    assert "published_at: " in md.splitlines()
+    assert _frontmatter(md)["published_at"] == ""
 
 
 def test_render_markdown_omits_description_section_when_none():
@@ -315,7 +363,7 @@ def test_render_markdown_omits_description_section_when_none():
     )
     md = render_markdown(bundle, _settings())
     assert "## Description" not in md
-    assert "uploader_id: " in md  # still emitted, empty
+    assert _frontmatter(md)["uploader_id"] == ""  # still emitted, empty
 
 
 def test_render_markdown_description_with_literal_dashes_and_hash_line_is_safe():
@@ -346,25 +394,10 @@ def test_render_markdown_description_with_literal_dashes_and_hash_line_is_safe()
     # description (which necessarily comes later, after the H1 and `## Description` heading)
     # must not be mistaken for the close fence, and nothing from the description must leak
     # into it.
-    assert lines[0] == "---"
-    close_idx = lines.index("---", 1)
-    frontmatter = lines[1:close_idx]
-    assert frontmatter == [
-        "platform: bilibili.com",
-        "id: BV1",
-        "part: 1",
-        "url: https://b/video/BV1",
-        "title: My Title",
-        "uploader: My Uploader",
-        "uploader_id: 42",
-        "thumbnail_url: ",
-        "duration: ?",
-        "published_at: ",
-        "fetched_at: 2026-06-29T00:00:00Z",
-        "transcript_source: whisper (test)",
-        "vision_model: none",
-        "tool_version: t",
-    ]
+    fm = _frontmatter(md)
+    assert fm["title"] == "My Title"
+    assert fm["uploader_id"] == "42"
+    assert fm["transcript_source"] == "whisper (test)"
 
     # The description text appears verbatim (each of its lines, in order) inside the
     # ## Description section, after the H1.
