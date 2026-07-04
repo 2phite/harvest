@@ -369,7 +369,8 @@ def test_process_part_fetches_metadata_once_and_shares_it(monkeypatch):
 
     monkeypatch.setattr(cli, "decide_transcript", fake_decide)
 
-    def fake_build(canonical, m, transcript, frames, settings, *, vision_model=None, danmaku=None):
+    def fake_build(canonical, m, transcript, frames, settings, *, vision_model=None, danmaku=None,
+                   interactions=None):
         seen["build_meta"] = m
         return Bundle(platform="youtube.com", id="x", part=1, url=canonical.url, title="t",
                       fetched_at="2026-07-02T00:00:00Z", transcript=transcript, frames=[],
@@ -401,7 +402,8 @@ def _danmaku_setup(monkeypatch, *, provider, danmaku_result=None):
 
     monkeypatch.setattr(cli, "decide_transcript", fake_decide)
 
-    def fake_build(canonical, m, transcript, frames, settings, *, vision_model=None, danmaku=None):
+    def fake_build(canonical, m, transcript, frames, settings, *, vision_model=None, danmaku=None,
+                   interactions=None):
         calls["build_danmaku"] = danmaku
         return Bundle(platform=canonical.platform, id=canonical.id, part=canonical.part,
                       url=canonical.url, title="t", fetched_at="2026-07-02T00:00:00Z",

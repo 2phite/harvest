@@ -31,6 +31,9 @@ There is no bare-url form. Supported sources: `bilibili.com`, `youtube.com`.
 --no-frame-images     omit PNGs from out/ (JSON still records phash/ts/caption)
 --danmaku       opt-in: fetch + mirror the bilibili audience danmaku track (bilibili.com only;
                 default OFF; a graceful no-op with a warning on YouTube)
+--interactions  opt-in: fetch the bilibili command-danmaku aggregates — 投票 votes (question +
+                option tallies) and 评分 grades (0–10 average + rater count) (bilibili.com only;
+                default OFF; a graceful no-op with a warning on YouTube; independent of --danmaku)
 ```
 
 ## `probe` — pre-flight metadata
@@ -145,6 +148,7 @@ Output is `out/<id>-p<part>/` containing `bundle.md`, `bundle.json`, and `frames
   },
   "frames": [ { "ts": 12.5, "path": "frames/000012_500.png", "phash": "…", "caption": "…", "ocr": "…" } ],
   "danmaku": null,                     // populated only when `--danmaku` ran on a supporting platform
+  "interactions": null,                // populated only when `--interactions` ran on a supporting platform
   "meta": { "cookies_used": true, "referer_used": true, "vision_model": "…", "tool_version": "…" }
 }
 ```
@@ -233,6 +237,75 @@ then `「text」 ×count` (the `×count` suffix omitted when `count == 1`):
 `- ﹢N more — see bundle.json` overflow marker for the ordinary overflow. bundle.md thus preserves
 the true chronological order across all line kinds; Atlas needing the complete uncapped ordinary set
 still reads `bundle.json`.
+
+### `Interactions` shapes (matches `schema.py::Interactions`/`Vote`/`VoteOption`/`Grade`) — `--interactions` opt-in
+
+Command danmaku (互动弹幕) are the uploader's on-screen interactive widgets — a **separate class from
+danmaku**, on a separate acquisition path (`x/v2/dm/web/view` → `DmWebViewReply.commandDms`, plain
+cookies, no WBI). `bundle.interactions` is `null` unless `harvest ingest --interactions` was passed
+**and** the platform supports it (bilibili.com only; on YouTube it prints a warning and stays `null`,
+same as not passing the flag). When it runs on bilibili and finds nothing, `bundle.interactions` is
+still populated (not null) with `votes: []` and `grades: []` — "requested, found nothing" is
+distinct from "not requested." This track uses **no LLM** — the data is already structured, so it is
+decoded straight to schema (no mirror, no clustering, no LM Studio dependency).
+
+Two widget kinds are captured, whitelisted by bilibili's own `command` tag; all others (`#ATTENTION#`
+follow prompts, `#LINK#` cards) carry no crowd signal and are dropped.
+
+```jsonc
+"interactions": {
+  "votes": [                           // 投票 / #VOTE# — an uploader question + crowd tallies
+    {
+      "question": "喜欢哪个版本？",       // VERBATIM uploader-authored framing question
+      "options": [
+        { "text": "只加黄葱", "count": 153, "write_in": false },
+        { "text": "木耳莴笋冬笋", "count": 250, "write_in": false },
+        { "text": "其他，请补充", "count": 40, "write_in": true }   // free-text "other" option
+      ],
+      "total_count": 443,              // bilibili's own reported total (authoritative; not a derived sum)
+      "ts": 371.3                      // content-time (s) the vote widget is pinned to; null if absent
+    }
+  ],
+  "grades": [                          // 评分 / #GRADE# — a 1–5 star bar, server pre-aggregated
+    {
+      "avg_score": 9.9,                // 0–10 scale (the 1–5 stars ×2); a computed mean, NOT raw votes
+      "count": 178                     // number of raters
+    }
+  ]
+}
+```
+
+**A `Vote` is uploader framing + a crowd tally.** The `question` and each `options[].text` are
+**verbatim** uploader content — never paraphrased/translated/decoded. Each `options[].count` is the
+crowd's structured response; `write_in: true` marks the free-text "其他/other" option (its `text` is a
+prompt, not an answer). `total_count` is bilibili's own reported total (kept explicit, not summed).
+`ts` locates the widget on the timeline — cross-reference to a transcript `## [mm:ss]` chunk the same
+way as a danmaku window (approximate, not frame-accurate).
+
+**A `Grade` is a pre-aggregated reception number, not a vote pile.** bilibili renders a 1–5 star bar;
+each viewer click posts a literal digit danmaku into the **census** (see Rating danmaku below), and
+the server returns only the aggregate: `avg_score` on a **0–10** scale (the 1–5 stars ×2) plus the
+rater `count`. So a Grade has **no framing question and no per-option breakdown** — just the mean and
+n. It is not timeline-pinned (no `ts`).
+
+**Authority: strictly BELOW `transcript`, a peer to danmaku.** Interactions are engagement + framing
+metadata, never a source of facts about the video's content. But they split internally on trust:
+
+- A **Vote's `question`** is *verified* uploader framing — it is structural widget data authored by
+  the uploader, **not** a crc32 guess like `DanmakuLine.author`, so it carries **no `?`-caveat**. Read
+  it as "the uploader asked this," full stop — but it is a *question*, not a claim the video asserts.
+- **Tallies and grades are crowd aggregates** — quantitative reception signal (more reliable than
+  free-text danmaku because they are counts, not interpretation), but still audience reaction, never
+  facts. "The room voted 250 for X" / "avg 9.9 over 178 raters" describes the crowd, not the content.
+
+**Rating danmaku — the `--danmaku` / `--interactions` overlap.** A Grade's raw star clicks are posted
+as ordinary census danmaku (literal `"5"`, `"1"`, …), clustered at the moment the star bar renders
+(typically the opening seconds). They are **genuine census danmaku** and therefore appear in the
+`--danmaku` mirror (e.g. `「5」×98` in the first window) when that flag is on — while the clean
+aggregate appears here under `--interactions`. This is the **same crowd act surfaced twice, by
+design**: the danmaku mirror must stay faithful (suppressing the digits would make it lie), and the
+Grade aggregate is the de-noised version of the same act. A consumer that has both should read the
+Grade aggregate as authoritative-over-reception and treat the `「5」` census cluster as its raw echo.
 
 ### Stable vs volatile fields
 

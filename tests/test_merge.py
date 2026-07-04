@@ -12,7 +12,20 @@ from harvest.merge import (
     write_bundle,
 )
 from harvest.providers.base import Canonical, SourceMetadata
-from harvest.schema import Bundle, Danmaku, DanmakuLine, DanmakuWindow, Frame, Meta, Segment, Transcript
+from harvest.schema import (
+    Bundle,
+    Danmaku,
+    DanmakuLine,
+    DanmakuWindow,
+    Frame,
+    Grade,
+    Interactions,
+    Meta,
+    Segment,
+    Transcript,
+    Vote,
+    VoteOption,
+)
 
 
 def _seg(start, end, text="x"):
@@ -725,3 +738,59 @@ def test_bundle_json_roundtrip_carries_complete_uncapped_danmaku(tmp_path):
 
     md = (out / "bundle.md").read_text(encoding="utf-8")
     assert "﹢10 more — see bundle.json" in md  # bundle.md stays capped
+
+
+def test_render_interactions_section():
+    from harvest.merge import render_markdown
+    interactions = Interactions(
+        votes=[
+            Vote(
+                question="喜欢哪个版本？",
+                options=[
+                    VoteOption(text="只加黄葱", count=153),
+                    VoteOption(text="其他，请补充", count=40, write_in=True),
+                ],
+                total_count=443,
+                ts=371.3,
+            )
+        ],
+        grades=[Grade(avg_score=9.9, count=178)],
+    )
+    bundle = _bundle()
+    bundle.interactions = interactions
+    md = render_markdown(bundle, _settings())
+    assert "## Interactions" in md
+    assert "9.9" in md and "178" in md          # grade summary
+    assert "喜欢哪个版本？" in md                  # vote question, verbatim
+    assert "[06:11]" in md                       # ts 371.3 -> mm:ss
+    assert "只加黄葱" in md and "153" in md        # option + tally
+    assert "443" in md                           # total
+
+
+def test_render_no_interactions_section_when_none():
+    from harvest.merge import render_markdown
+    bundle = _bundle()
+    bundle.interactions = None
+    assert "## Interactions" not in render_markdown(bundle, _settings())
+
+
+def test_render_no_interactions_section_when_empty():
+    from harvest.merge import render_markdown
+    bundle = _bundle()
+    bundle.interactions = Interactions()  # requested, found nothing
+    assert "## Interactions" not in render_markdown(bundle, _settings())
+
+
+def test_build_bundle_threads_interactions():
+    # extend the existing build_bundle test path: build_bundle accepts interactions= and sets it
+    from harvest.merge import build_bundle
+    meta = SourceMetadata(
+        platform="bilibili.com", id="BV1", title="View Title", uploader="View Owner",
+        uploader_id="999", description="View description.", duration_s=123,
+        published_at="2024-06-28T16:00:00+08:00", parts=1, part_durations_s=[123],
+    )
+    interactions = Interactions(grades=[Grade(avg_score=8.0, count=5)])
+    bundle = build_bundle(
+        _canonical(), meta, _transcript(), [], _settings(), interactions=interactions
+    )
+    assert bundle.interactions == interactions

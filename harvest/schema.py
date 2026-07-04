@@ -143,6 +143,53 @@ class Danmaku(BaseModel):
     windows: list[DanmakuWindow] = Field(default_factory=list)
 
 
+class VoteOption(BaseModel):
+    """One selectable option of a Vote (投票). `text` is the VERBATIM option label from the
+    uploader; `count` is the crowd tally for it. `write_in` marks the free-text "其他/other"
+    option (bilibili `has_self_def`) — its `text` is a prompt, not a real answer."""
+
+    text: str
+    count: int = 0
+    write_in: bool = False
+
+
+class Vote(BaseModel):
+    """An on-screen vote (投票 / bilibili `#VOTE#`): an uploader-authored `question` plus discrete
+    `options`, each with a running crowd tally. `total_count` is bilibili's own reported total (kept
+    explicit, not summed). `ts` is the content-time (seconds) the widget is pinned to (null if the
+    widget carries no timeline anchor). The question and option texts are VERBATIM uploader content;
+    the question is VERIFIED framing (structural widget data, not a crc32 guess), but it is a
+    question, never a claim the video asserts. Authority: BELOW transcript."""
+
+    question: str
+    options: list[VoteOption] = Field(default_factory=list)
+    total_count: int = 0
+    ts: float | None = None
+
+
+class Grade(BaseModel):
+    """A star grading (评分 / bilibili `#GRADE#`): a 1–5 star bar the server pre-aggregates. Its
+    datum is `avg_score` on a **0–10 scale** (the 1–5 stars ×2) plus the rater `count`. It has NO
+    framing question and NO per-option breakdown — just the mean and n. Not timeline-pinned.
+    Authority: a crowd reception aggregate, strictly BELOW transcript (never a fact about content).
+    NB: viewers' raw star clicks also post literal digit danmaku ("5"/"1") into the census, so with
+    --danmaku on they ALSO appear in the danmaku mirror — the same act, surfaced twice by design."""
+
+    avg_score: float  # 0–10 (1–5 stars ×2); a server-computed mean, NOT raw votes
+    count: int = 0
+
+
+class Interactions(BaseModel):
+    """Command danmaku (互动弹幕) — the uploader's on-screen interactive widgets — a SEPARATE class
+    from `danmaku`, on a separate acquisition path (`x/v2/dm/web/view`, no LLM). bilibili-only;
+    present only when `--interactions` ran on a supporting platform (else `Bundle.interactions` is
+    null). Populated-but-empty (`votes: []`, `grades: []`) means "requested, found nothing" —
+    distinct from null ("not requested")."""
+
+    votes: list[Vote] = Field(default_factory=list)
+    grades: list[Grade] = Field(default_factory=list)
+
+
 class Bundle(BaseModel):
     schema_version: str = SCHEMA_VERSION
     platform: Platform
@@ -161,4 +208,5 @@ class Bundle(BaseModel):
     transcript: Transcript
     frames: list[Frame] = Field(default_factory=list)
     danmaku: Danmaku | None = None
+    interactions: Interactions | None = None
     meta: Meta

@@ -24,9 +24,9 @@ Keep this seam clean: harvest is a deterministic batch unit; everything interpre
 elsewhere.
 
 The defining superpower is **authenticated acquisition from walled/rich media sources, then do
-whatever with what you pulled** — today that "whatever" is the bundle (plus the opt-in `--danmaku`
-crowd-mirror track, bilibili only); the architecture is built so future outputs (raw media
-collection, thumbnails, AV remux) are additive.
+whatever with what you pulled** — today that "whatever" is the bundle (plus two bilibili-only opt-in
+tracks: the `--danmaku` crowd mirror and the `--interactions` command-danmaku aggregates); the
+architecture is built so future outputs (raw media collection, thumbnails, AV remux) are additive.
 
 ## 2. Scope
 
@@ -35,8 +35,8 @@ talking" (lectures, talks) — single-speaker, slide-or-talking-head.
 
 **Deferred** (architecture accommodates, not built): playlists, live VODs, members-only/age-gated
 bulk flows, `bilibili.tv`, and roadmap stages (thumbnail metadata, AV remux for collection).
-Danmaku shipped as the opt-in `--danmaku` crowd-mirror track (bilibili only; see §6/§8 and
-PROTOCOL.md).
+Danmaku shipped as the opt-in `--danmaku` crowd-mirror track, and command danmaku (投票 votes / 评分
+grades) as the opt-in `--interactions` track (both bilibili only; see §8 and PROTOCOL.md).
 
 ## 3. Stack
 
@@ -223,6 +223,21 @@ Trimmed fixtures seeding the four YouTube branches live in `tests/fixtures/youtu
   sender, so it may be a collision — empirically confirmed) and is a weak hint, not authoritative.
   See PROTOCOL.md for the full contract and `bundle.md`'s single-pass chronological rendering (marked
   lines pilled `👍`/`UP主?`/`合作?` and never dropped; only the ordinary flood is capped).
+- **Command danmaku (`--interactions`) = a separate acquisition, not the census.** 互动弹幕 —
+  the uploader's on-screen interactive widgets — do NOT ride the `seg.so` census; they come from
+  `x/v2/dm/web/view` → `DmWebViewReply.commandDms` (plain cookies, no WBI — spike-confirmed). Two
+  kinds are captured, whitelisted by their `command` tag: **Vote** (`#VOTE#`, 投票 — an
+  uploader-authored `question` + discrete `options`, each with a running tally) and **Grade**
+  (`#GRADE#`, 评分 — a 1–5 star bar the server pre-aggregates into a **0–10 `avg_score`** + rater
+  `count`; it has no framing question). Other kinds (`#ATTENTION#` follow prompts, `#LINK#` cards)
+  carry no crowd signal and are dropped. Unlike `--danmaku`, this is **purely structured — no LLM**
+  (decode → schema; no LM Studio dependency). Authority sits **below `transcript`**, a peer track to
+  danmaku: a Vote's question is *verified* uploader framing (no `?`-caveat — it is structural widget
+  data, not a crc32 guess), while tallies and grades are crowd aggregates (reception signal, never
+  facts about the video). `--danmaku` and `--interactions` are independent flags; when both run, a
+  Grade's raw 1–5 **Rating danmaku** (the literal `「5」` clicks) still appear in the faithful census
+  mirror AND as the clean Grade aggregate here — the same act twice, by design (the mirror must not
+  lie). See PROTOCOL.md for the full contract and `bundle.md`'s `## Interactions` render.
 
 ## 9. Repository layout (target)
 

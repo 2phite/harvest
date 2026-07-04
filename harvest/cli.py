@@ -65,6 +65,11 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--danmaku", action="store_true",
         help="opt-in: fetch + mirror the bilibili danmaku (audience comment) track (bilibili only)",
     )
+    ingest.add_argument(
+        "--interactions", action="store_true",
+        help="opt-in: fetch bilibili command-danmaku aggregates — 投票 votes + 评分 grades "
+             "(bilibili only; independent of --danmaku)",
+    )
 
     probe_cmd = sub.add_parser("probe", help="cheap pre-flight metadata probe, no media")
     probe_cmd.add_argument("url")
@@ -180,9 +185,17 @@ def process_part(canonical: Canonical, settings: Settings, args) -> None:
                 duration_s=meta.duration_s, window_s=settings.danmaku_window_s,
             )
 
+    interactions = None
+    if args.interactions:
+        if not hasattr(provider, "fetch_interactions"):
+            print(f"[{canonical.id} p{canonical.part}] --interactions ignored: "
+                  f"not supported on {canonical.platform}")
+        else:
+            interactions = provider.fetch_interactions(canonical, settings)
+
     bundle = build_bundle(
         canonical, meta, transcript, frames, settings,
-        vision_model=vision_model, danmaku=danmaku,
+        vision_model=vision_model, danmaku=danmaku, interactions=interactions,
     )
     out = write_bundle(
         bundle, settings, frame_sources=frame_sources, frame_images=not args.no_frame_images
