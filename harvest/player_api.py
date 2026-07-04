@@ -79,6 +79,7 @@ class ViewData(BaseModel):
     pubdate: int | None = None  # Unix seconds, publish time (SPEC: published_at source)
     owner_mid: int | None = None
     owner_name: str | None = None
+    staff_mids: list[int] = []  # 合作 co-author mids from data.staff[]; [] when solo
     pic: str | None = None
     view_count: int | None = None
     danmaku_count: int | None = None
@@ -148,6 +149,8 @@ def fetch_view(canonical: Canonical, settings: Settings, *, opener=None) -> View
 
     data = view.get("data") or {}
     owner = data.get("owner") or {}
+    staff = data.get("staff") or []
+    staff_mids = [s["mid"] for s in staff if isinstance(s, dict) and s.get("mid") is not None]
     desc = data.get("desc") or None
     stat = data.get("stat") or {}
 
@@ -177,6 +180,7 @@ def fetch_view(canonical: Canonical, settings: Settings, *, opener=None) -> View
             pubdate=data.get("pubdate"),
             owner_mid=owner.get("mid"),
             owner_name=owner.get("name"),
+            staff_mids=staff_mids,
             pic=data.get("pic") or None,
             view_count=stat.get("view"),
             danmaku_count=stat.get("danmaku"),

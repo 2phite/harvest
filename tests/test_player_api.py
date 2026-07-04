@@ -274,6 +274,33 @@ def test_fetch_view_empty_desc_becomes_none():
     assert view.desc is None
 
 
+def test_fetch_view_parses_staff_mids():
+    canonical = _canonical()
+    payload = {
+        "code": 0,
+        "data": {
+            "aid": 1, "cid": 1, "owner": {"mid": 7, "name": "U"},
+            "staff": [
+                {"mid": 7, "title": "UP主"},
+                {"mid": 99, "title": "配音"},
+                {"mid": 100, "title": "后期"},
+            ],
+            "pages": [],
+        },
+    }
+    opener = _FakeOpener({_view_url(canonical): payload})
+    view = fetch_view(canonical, Settings(), opener=opener)
+    assert view.staff_mids == [7, 99, 100]
+
+
+def test_fetch_view_no_staff_key_is_empty_list():
+    canonical = _canonical()
+    payload = {"code": 0, "data": {"aid": 1, "cid": 1, "owner": {"mid": 7}, "pages": []}}
+    opener = _FakeOpener({_view_url(canonical): payload})
+    view = fetch_view(canonical, Settings(), opener=opener)
+    assert view.staff_mids == []
+
+
 def test_fetch_view_raises_view_error_on_malformed_pages_entry():
     """An upstream `pages[]` entry missing `page` makes `ViewPage(part=...)` get `None`,
     which pydantic rejects (`part: int`). That parse failure must surface as `ViewError`
