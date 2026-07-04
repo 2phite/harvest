@@ -91,3 +91,20 @@ def test_find_js_runtime_none_when_absent(monkeypatch, tmp_path):
     monkeypatch.setenv("DENO_INSTALL", str(tmp_path / "empty"))
     _no_winget(monkeypatch)
     assert find_js_runtime() is None
+
+
+from harvest.config import AutoSubNet, Settings
+
+
+def test_settings_has_youtube_auto_net_defaults():
+    s = Settings()
+    assert isinstance(s.youtube_auto, AutoSubNet)
+    assert s.youtube_auto.min_cues == 5
+    assert s.youtube_auto.coverage_min == 0.70
+    assert s.youtube_auto.coverage_max == 1.10
+    assert s.youtube_auto.cps_min == 0.5
+
+
+def test_two_settings_do_not_share_one_youtube_auto_instance():
+    # default_factory, not a shared mutable default
+    assert Settings().youtube_auto is not Settings().youtube_auto
