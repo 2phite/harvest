@@ -37,6 +37,7 @@ def _parse_vote(extra: dict, progress_ms: int | None) -> Vote:
             write_in=bool(o.get("has_self_def", False)),
         )
         for o in (extra.get("options") or [])
+        if isinstance(o, dict)
     ]
     return Vote(
         question=str(extra.get("question") or ""),

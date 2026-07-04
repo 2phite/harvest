@@ -96,6 +96,18 @@ def test_build_interactions_skips_malformed_extra():
     assert result.grades == [Grade(avg_score=9.9, count=178)]
 
 
+def test_build_interactions_skips_wrong_shape_options_without_aborting_batch():
+    raws = [
+        RawCommandDm("#VOTE#", "v", 100, '{"question":"q","cnt":1,"options":"abc"}', "1"),
+        RawCommandDm("#GRADE#", "g", None, _GRADE_EXTRA, "2"),
+    ]
+    result = build_interactions(raws)
+    # the wrong-shape vote is tolerated: it lands with empty options (question/cnt still parse),
+    # and the following grade still lands too — one bad widget never aborts the batch.
+    assert result.votes == [Vote(question="q", options=[], total_count=1, ts=0.1)]
+    assert result.grades == [Grade(avg_score=9.9, count=178)]
+
+
 def test_build_interactions_vote_missing_ts_is_none():
     raws = [RawCommandDm("#VOTE#", "v", None, _VOTE_EXTRA, "1")]
     assert build_interactions(raws).votes[0].ts is None
