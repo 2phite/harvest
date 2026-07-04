@@ -305,7 +305,7 @@ def test_render_markdown_emits_uploader_id_and_description_section():
     # Description section appears after the H1 and before the transcript body.
     h1_idx = next(i for i, l in enumerate(lines) if l.startswith("# "))
     desc_idx = next(i for i, l in enumerate(lines) if l == "## Description")
-    transcript_idx = next(i for i, l in enumerate(lines) if l.startswith("## ["))
+    transcript_idx = next(i for i, l in enumerate(lines) if l == "## Transcript")
     assert h1_idx < desc_idx < transcript_idx
 
 
@@ -448,6 +448,38 @@ def _bundle_with_danmaku(danmaku):
         danmaku=danmaku,
         meta=Meta(cookies_used=False, referer_used=True, tool_version="t"),
     )
+
+
+def test_transcript_section_nests_windows_under_h2():
+    bundle = _bundle(
+        transcript=Transcript(
+            source="whisper", source_reason="test",
+            segments=[_seg(0, 5, "hello"), _seg(80, 85, "later")],
+        ),
+    )
+    md = render_markdown(bundle, _settings())
+    lines = md.splitlines()
+    assert "## Transcript" in lines
+    # Windows are H3, not H2.
+    assert any(l.startswith("### [") for l in lines)
+    assert not any(l.startswith("## [") for l in lines)
+    # Ordering: H1 < ## Transcript < first ### window.
+    h1 = next(i for i, l in enumerate(lines) if l.startswith("# "))
+    tr = lines.index("## Transcript")
+    win = next(i for i, l in enumerate(lines) if l.startswith("### ["))
+    assert h1 < tr < win
+
+
+def test_no_transcript_placeholder_under_transcript_heading():
+    bundle = _bundle(
+        transcript=Transcript(source="whisper", source_reason="pending", segments=[]),
+        frames=[],
+    )
+    md = render_markdown(bundle, _settings())
+    lines = md.splitlines()
+    assert "## Transcript" in lines
+    ph = next(i for i, l in enumerate(lines) if "no transcript yet" in l)
+    assert lines.index("## Transcript") < ph
 
 
 def test_render_markdown_omits_danmaku_section_when_none():

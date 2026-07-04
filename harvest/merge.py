@@ -142,6 +142,9 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
         lines.append(bundle.description)
         lines.append("")
 
+    lines.append("## Transcript")
+    lines.append("")
+
     if not t.segments and not bundle.frames:
         lines.append("_(no transcript yet — Whisper pending)_")
         return "\n".join(lines) + "\n"
@@ -149,7 +152,7 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
     for ch in chunk(
         t.segments, bundle.frames, window_s=settings.chunk_window_s, duration_s=bundle.duration_s
     ):
-        lines.append(f"## [{_mmss(ch.start)}]")
+        lines.append(f"### [{_mmss(ch.start)}]")
         for fr in ch.frames:
             if fr.ocr:
                 lines.append(f"**slide (OCR):** {fr.ocr}")
