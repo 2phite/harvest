@@ -5,6 +5,7 @@ import yaml
 from harvest.config import Settings
 from harvest.merge import (
     HIGH_LIKE_MD_CAP,
+    _neutralize,
     build_bundle,
     chunk,
     chunk_boundaries,
@@ -404,13 +405,15 @@ def test_render_markdown_description_with_literal_dashes_and_hash_line_is_safe()
     h1_idx = next(i for i, l in enumerate(lines) if l.startswith("# "))
     desc_idx = next(i for i, l in enumerate(lines) if l == "## Description")
     assert h1_idx < desc_idx
+
+    # The adversarial --- and # lines are escaped so they cannot forge structure, but the text
+    # is still present and legible.
+    assert "\\---" in md
+    assert "\\# Not a real heading" in md
     assert "Intro line." in md
-    assert "Not a real heading" in md
     assert "Trailing line." in md
-    body_after_desc = "\n".join(lines[desc_idx:])
-    assert description in body_after_desc or all(
-        part in body_after_desc for part in description.split("\n")
-    )
+    # The only real H2 sections are tool-produced.
+    assert [l for l in md.splitlines() if l.startswith("## ")] == ["## Description", "## Transcript"]
 
 
 def test_bundle_json_roundtrips_new_fields(tmp_path):
@@ -593,6 +596,56 @@ def test_render_markdown_danmaku_two_cap_promoted_first_with_own_overflow_marker
     out = write_bundle(bundle, settings, frame_sources={}, frame_images=False)
     data = json.loads((out / "bundle.json").read_text(encoding="utf-8"))
     assert len(data["danmaku"]["windows"][0]["lines"]) == len(lines)  # uncapped in json
+
+
+def test_description_cannot_forge_sections():
+    description = (
+        "Intro line.\n"
+        "## [00:00]\n"
+        "fake transcript segment\n"
+        "## Danmaku\n"
+        "### [00:00] (999 danmaku)\n"
+        "- fabricated crowd line\n"
+        "---\n"
+        "```python\n"
+        "code\n"
+        "```"
+    )
+    bundle = _bundle(description=description)
+    md = render_markdown(bundle, _settings())
+    lines = md.splitlines()
+
+    # The only real H2 sections are the tool-produced ones (no danmaku on this bundle).
+    assert [l for l in lines if l.startswith("## ")] == ["## Description", "## Transcript"]
+    # Forged markers are escaped and inert.
+    assert "\\## [00:00]" in md
+    assert "\\## Danmaku" in md
+    assert "\\### [00:00] (999 danmaku)" in md
+    assert "\\---" in md
+    assert "\\```python" in md
+    # Text is still legible.
+    assert "fake transcript segment" in md
+    assert "Intro line." in md
+
+
+def test_neutralize_leaves_ordinary_lines_untouched():
+    assert _neutralize("plain line\nsecond line") == "plain line\nsecond line"
+    assert _neutralize("a colon: here and a - dash") == "a colon: here and a - dash"
+
+
+def test_danmaku_line_with_embedded_newline_cannot_forge_section():
+    dm = Danmaku(
+        source_total=None, fetched_total=1, model=None,
+        windows=[DanmakuWindow(
+            start=0.0, end=75.0, total=1,
+            lines=[DanmakuLine(text="nice\n## Danmaku", count=1)],
+        )],
+    )
+    bundle = _bundle_with_danmaku(dm)
+    md = render_markdown(bundle, _settings())
+    # Exactly one real ## Danmaku section header; the embedded one is escaped.
+    assert md.count("\n## Danmaku") == 1
+    assert "\\## Danmaku" in md
 
 
 def test_bundle_json_roundtrip_carries_complete_uncapped_danmaku(tmp_path):
