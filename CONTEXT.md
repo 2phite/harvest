@@ -71,18 +71,33 @@ these are unverifiable by eye); distinguished only by *which* author mid it matc
 
 **Command danmaku** (互动弹幕 / interactive danmaku):
 Structured interactive widgets the uploader places on the timeline — **not** scrolling text and
-**not** part of the **Danmaku track**. A separate class with its own acquisition. **On-screen
-poll** and **star grading** are the two kinds relevant here.
+**not** part of the **Danmaku track**. A separate class with its own acquisition. Several kinds
+exist (follow/charge prompts, related-video cards, …); only the two that carry a crowd signal are
+captured: **Vote** and **Grade**. (Terms follow bilibili's own `#VOTE#` / `#GRADE#` command names,
+to keep one vocabulary between the API and our code.)
 
-**On-screen poll** (投票):
-A command danmaku presenting a question with discrete options that viewers click. The question is
-uploader content; the tallies are crowd response.
+**Vote** (投票):
+A command danmaku presenting an uploader-authored question with discrete options viewers click;
+each option carries a running tally, and one option may be a free-text "other". The crowd's clicks
+live **only** in those tallies — they are not danmaku and never touch the **Danmaku track**. The
+question is uploader content; the tallies are the crowd's structured response to it.
+_Avoid_: "poll", "survey" (bilibili's term is "vote").
 
-**Star grading** (评分 / 打分):
-A special on-screen poll where viewers pick a number 1–5 rating the video (or a question framed by
-the uploader). Meaning is loose and density-driven — often just "5" spam — so the raw numbers are
-**noise without the uploader's framing question** for context.
-_Avoid_: "review", "score" (bare).
+**Grade** (评分 / 打分):
+A command danmaku inviting viewers to rate the video on a **1–5 star bar**. It has **no framing
+question** and no discrete options; any uploader text on it is a decorative thank-you. Its datum is
+a server-computed aggregate — a **0–10 average** (the 1–5 stars ×2) plus a rater count — so it is
+NOT raw "5 spam". (The earlier "1–5 rating, noise without a framing question" framing was wrong on
+both counts.) The raw clicks surface separately as **Rating danmaku**.
+_Avoid_: "star grading", "review", "score" (bilibili's term is "grade").
+
+**Rating danmaku**:
+The bare digit danmaku (e.g. "5", "1") that a viewer's **Grade** click posts into the ordinary
+scrolling census, clustered at the moment the star bar renders (typically the opening seconds).
+They ride the **Danmaku track** like any danmaku — they are NOT **Command danmaku** — and are the
+raw crowd act whose server-side summary is the **Grade** aggregate. Surfacing both double-counts the
+same act.
+_Avoid_: "grade danmaku" (implies it belongs to the grade widget; it rides the census).
 
 ## Comments
 
