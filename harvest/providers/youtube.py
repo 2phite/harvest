@@ -1,8 +1,10 @@
-"""YouTubeProvider (SPEC §6): native yt-dlp metadata + exact-key human-caption reuse.
+"""YouTubeProvider (SPEC §6): native yt-dlp metadata + tiered caption reuse.
 
-Caption rule: target_lang = pinned --lang, else info["language"] if truthy, else None.
-None -> Whisper. Known L with an exact subtitles[L] human track -> reuse (human-sub, language L).
-Otherwise -> Whisper. automatic_captions is NEVER consulted. No quality gate."""
+Transcript tier order: human-sub > auto-sub > whisper. target_lang = pinned --lang, else
+info["language"], else None. Human `subtitles[target]` on an exact key -> human-sub. Else the
+original-audio auto-caption (key `target-orig`/`target`, or the sole `*-orig` when target is unknown),
+fetched as de-rolled SRT and accepted only if it clears the structural net (harvest/providers/
+youtube_autosub.py). Anything else -> Whisper. --force-whisper (handled in cli) skips all of this."""
 
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ import yt_dlp
 from ..config import Settings
 from ..subtitles import parse_vtt, ydl_opts
 from .base import Canonical, SourceMetadata, SubtitleOutcome, register
+from .youtube_autosub import clean_srt_segments, pick_auto_key, structural_net
 
 _ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
@@ -124,24 +127,46 @@ class YouTubeProvider:
     def fetch_subtitle(
         self, canonical, settings, meta, *, pinned_lang=None, info=None, fetch_url=None,
     ) -> SubtitleOutcome | None:
+        # Tier order: human-sub (exact key) > auto-sub (original-audio ASR, gated) > Whisper.
         if info is None:
             info = self._extract_info(canonical, settings)
-        target = self._target_lang(info, pinned_lang)
-        if target is None:
-            return None                                     # unknown language -> Whisper (no gate)
-        tracks = (info.get("subtitles") or {}).get(target)  # exact key only; never automatic_captions
-        if not tracks:
-            return None                                     # no exact human track -> Whisper
-        vtt = next((t for t in tracks if t.get("ext") == "vtt"), None) or tracks[0]
         fetch = fetch_url or self._fetch_url
-        raw = fetch(vtt["url"], settings)
-        segments = parse_vtt(raw)
-        if not segments:
-            return None
+        target = self._target_lang(info, pinned_lang)
+
+        # Tier 1 — human captions on an exact original-language key. automatic_captions excluded here.
+        if target is not None:
+            tracks = (info.get("subtitles") or {}).get(target)
+            if tracks:
+                vtt = next((t for t in tracks if t.get("ext") == "vtt"), None) or tracks[0]
+                segments = parse_vtt(fetch(vtt["url"], settings))
+                if segments:
+                    return SubtitleOutcome(
+                        accepted=True, source="human-sub",
+                        source_reason=f"human-sub (exact-key match: {target})",
+                        language=target, segments=segments, quality_gate=None,
+                    )
+
+        # Tier 2 — original-language auto-caption, structural net decides accept vs Whisper.
+        auto = info.get("automatic_captions") or {}
+        key = pick_auto_key(auto, target)
+        if key is None:
+            return None                                     # no usable original auto track -> Whisper
+        srt = next((t for t in (auto.get(key) or []) if t.get("ext") == "srt"), None)
+        if srt is None:
+            return None                                     # no de-rolled srt to parse -> Whisper
+        segments = clean_srt_segments(fetch(srt["url"], settings))
+        lang = key[:-5] if key.endswith("-orig") else key   # "en-orig" -> "en"
+        passed, reason = structural_net(segments, float(meta.duration_s or 0), settings.youtube_auto)
+        if not passed:
+            return SubtitleOutcome(
+                accepted=False, source=None,
+                source_reason=f"auto-sub rejected ({reason})",
+                language=None, segments=[],
+            )
         return SubtitleOutcome(
-            accepted=True, source="human-sub",
-            source_reason=f"human-sub (exact-key match: {target})",
-            language=target, segments=segments, quality_gate=None,
+            accepted=True, source="auto-sub",
+            source_reason=f"auto-sub (youtube auto-caption: {key})",
+            language=lang, segments=segments, quality_gate=None,
         )
 
 
