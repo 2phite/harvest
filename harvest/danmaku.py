@@ -90,6 +90,32 @@ def _exact_dedup(records: list[RawDanmaku]) -> list[tuple[str, int, float]]:
     return [(text, counts[text], first_ts[text]) for text in order]
 
 
+def _dedup_elevated(records: list[RawDanmaku]) -> list[tuple[DanmakuLine, float]]:
+    """Collapse byte-identical ELEVATED danmaku (high_like and/or author), keyed on
+    (text, high_like, author) so distinct elevation combos stay distinct, preserving
+    first-occurrence content_ts. Each becomes a DanmakuLine carrying its own flags. Never
+    LLM-clustered -- an elevated line's exact wording IS its value (a promoted meme, an
+    uploader correction), so it is extracted verbatim before the ordinary flood is clustered."""
+    counts: dict[tuple[str, bool, str | None], int] = {}
+    first_ts: dict[tuple[str, bool, str | None], float] = {}
+    order: list[tuple[str, bool, str | None]] = []
+    for r in records:
+        key = (r.text, r.high_like, r.author)
+        if key not in counts:
+            counts[key] = 0
+            first_ts[key] = r.content_ts
+            order.append(key)
+        counts[key] += 1
+    out: list[tuple[DanmakuLine, float]] = []
+    for key in order:
+        text, high_like, author = key
+        out.append(
+            (DanmakuLine(text=text, count=counts[key], high_like=high_like, author=author),
+             first_ts[key])
+        )
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Pure piece: windowing (content-time, aligned to bundle chunks)
 # ---------------------------------------------------------------------------
@@ -273,9 +299,11 @@ def _cluster_window(
 
 
 def _fingerprint(fetch: DanmakuFetch) -> str:
-    # `high_like` folded in: a re-fetch that only changes promotion status (no text/ts change)
-    # must restage, since it changes which lines get extracted verbatim vs clustered.
-    blob = "".join(f"{r.content_ts}:{r.high_like}:{r.text}\x1f" for r in fetch.records)
+    # high_like + author folded in: a re-fetch that only changes elevation status (no text/ts
+    # change) must restage, since it changes which lines get extracted verbatim vs clustered.
+    blob = "".join(
+        f"{r.content_ts}:{r.high_like}:{r.author}:{r.text}\x1f" for r in fetch.records
+    )
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:10]
 
 
@@ -332,26 +360,22 @@ def represent_danmaku(
     for start, end, records in window_records(
         fetch.records, resolved_boundaries, duration_s=duration_s, window_s=window_s
     ):
-        # Extract-before-cluster: a high_like (promoted) danmaku is pulled out BEFORE the LLM
-        # ever sees the window, so its exact wording is never absorbed into a `x N` flood cluster
-        # -- even when byte-identical to one. The LLM only ever sees the ordinary partition.
-        promoted_records = [r for r in records if r.high_like]
-        ordinary_records = [r for r in records if not r.high_like]
+        # Extract-before-cluster: any ELEVATED danmaku (high_like OR author) is pulled out BEFORE
+        # the LLM sees the window, so its exact wording + flags are never absorbed into a flood
+        # cluster. The LLM only ever sees the ordinary partition.
+        elevated_records = [r for r in records if r.high_like or r.author is not None]
+        ordinary_records = [r for r in records if not (r.high_like or r.author is not None)]
 
         ordinary_entries = _exact_dedup(ordinary_records)
         clustered = _cluster_window(
             client, model, settings.lmstudio_danmaku_max_tokens, ordinary_entries
         )
 
-        promoted_entries = _exact_dedup(promoted_records)
-        promoted_lines = [
-            (DanmakuLine(text=text, count=count, high_like=True), ts)
-            for text, count, ts in promoted_entries
-        ]
+        elevated_lines = _dedup_elevated(elevated_records)
 
         # Mechanical merge-sort by first-occurrence content_ts -- the window's final chronological
-        # order, replacing the earlier index-based ordering now that high_like lines interleave.
-        combined = sorted(clustered + promoted_lines, key=lambda pair: pair[1])
+        # order, interleaving elevated lines with the clustered ordinary ones.
+        combined = sorted(clustered + elevated_lines, key=lambda pair: pair[1])
         lines = [line for line, _ts in combined]
         windows.append(DanmakuWindow(start=start, end=end, total=len(records), lines=lines))
 
