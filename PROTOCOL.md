@@ -330,8 +330,12 @@ opt-in: bilibili videos with a nonzero danmaku count are candidates for danmaku 
 clean local Whisper transcript is trustworthy; a machine auto-caption is a coin-flip. `language` is a
 separate axis — a `whisper` transcript's language is Whisper's detected (or `--lang`-pinned) language.
 
-> harvest currently produces `auto-sub` only on the bilibili path (when its quality gate passes).
-> YouTube produces only `human-sub` or `whisper` (auto-captions are skipped by design).
+> harvest produces `auto-sub` on **both** paths: bilibili when its quality gate passes, and YouTube
+> when the original-language auto-caption clears a structural validity net. Mind the split: `auto-sub`
+> is authority-ranked **below** `whisper` (rank it that way), yet harvest acquisition-*prefers* it over
+> Whisper for cost — so a bundle's `auto-sub` means "cheapest trustworthy-enough track we had," not
+> "best we could produce." A consumer who needs the higher-authority track re-runs with
+> `--force-whisper`.
 
 ## Changes from the bili-tool contract (for migrating an existing Atlas skill)
 
