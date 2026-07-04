@@ -86,7 +86,8 @@ def test_structural_net_rejects_truncated_coverage():
 
 
 def test_structural_net_rejects_empty_but_covered():
-    # Two cues spanning the whole duration but almost no text -> cps below floor
+    # Five cues spanning the whole duration but almost no text -> cps below floor
+    # (>= min_cues so presence passes and coverage is full; only the cps check rejects)
     segs = [Segment(start=0.0, end=1.0, text="[music]"), Segment(start=59.0, end=60.0, text="[music]"), Segment(start=119.0, end=120.0, text="[music]"), Segment(start=179.0, end=180.0, text="[music]"), Segment(start=299.0, end=300.0, text="[music]")]
     passed, reason = structural_net(segs, 300.0, AutoSubNet())
     assert passed is False and "chars-per-second" in reason
