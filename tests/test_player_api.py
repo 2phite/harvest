@@ -1,4 +1,6 @@
 import json
+import zlib
+from dataclasses import replace as _replace  # noqa: F401  (kept explicit for clarity)
 
 import pytest
 
@@ -492,9 +494,51 @@ def _encode_tag(field: int, wiretype: int) -> bytes:
     return _encode_varint((field << 3) | wiretype)
 
 
-def _encode_elem(*, progress_ms: int, content: str, attr: int = 0) -> bytes:
+def _mid_hash(mid: int) -> str:
+    return format(zlib.crc32(str(mid).encode("utf-8")) & 0xFFFFFFFF, "x")
+
+
+def test_classify_authors_tags_owner_staff_and_leaves_crowd_and_hashless():
+    from harvest.player_api import RawDanmaku, classify_authors
+    records = [
+        RawDanmaku(content_ts=1.0, text="owner note", mid_hash=_mid_hash(7)),
+        RawDanmaku(content_ts=2.0, text="staff note", mid_hash=_mid_hash(99)),
+        RawDanmaku(content_ts=3.0, text="crowd", mid_hash=_mid_hash(555)),
+        RawDanmaku(content_ts=4.0, text="no hash", mid_hash=""),
+    ]
+    out = classify_authors(records, owner_mid=7, staff_mids=[7, 99])
+    assert [r.author for r in out] == ["owner", "staff", None, None]
+    # text/ts untouched
+    assert [r.text for r in out] == ["owner note", "staff note", "crowd", "no hash"]
+
+
+def test_classify_authors_owner_precedence_when_owner_also_in_staff():
+    from harvest.player_api import RawDanmaku, classify_authors
+    records = [RawDanmaku(content_ts=1.0, text="x", mid_hash=_mid_hash(7))]
+    out = classify_authors(records, owner_mid=7, staff_mids=[7])
+    assert out[0].author == "owner"
+
+
+def test_classify_authors_no_author_mids_returns_input_unchanged():
+    from harvest.player_api import RawDanmaku, classify_authors
+    records = [RawDanmaku(content_ts=1.0, text="x", mid_hash=_mid_hash(7))]
+    out = classify_authors(records, owner_mid=None, staff_mids=[])
+    assert out is records  # no-op fast path, same list object
+
+
+def test_classify_authors_tolerates_unparseable_mid_hash():
+    from harvest.player_api import RawDanmaku, classify_authors
+    records = [RawDanmaku(content_ts=1.0, text="x", mid_hash="not-hex")]
+    out = classify_authors(records, owner_mid=7, staff_mids=[])
+    assert out[0].author is None
+
+
+def _encode_elem(*, progress_ms: int, content: str, attr: int = 0, mid_hash: str = "") -> bytes:
     buf = bytearray()
     buf += _encode_tag(2, 0) + _encode_varint(progress_ms)
+    if mid_hash:
+        h = mid_hash.encode("utf-8")
+        buf += _encode_tag(6, 2) + _encode_varint(len(h)) + h
     data = content.encode("utf-8")
     buf += _encode_tag(7, 2) + _encode_varint(len(data)) + data
     if attr:
@@ -502,13 +546,47 @@ def _encode_elem(*, progress_ms: int, content: str, attr: int = 0) -> bytes:
     return bytes(buf)
 
 
-def _encode_seg(elems: list[tuple[int, str, int]]) -> bytes:
-    """Build a fake `DmSegMobileReply` body from `(progress_ms, content, attr)` tuples."""
+def _encode_seg(elems: list[tuple]) -> bytes:
+    """Build a fake `DmSegMobileReply` body. Each elem is (progress_ms, content, attr) or
+    (progress_ms, content, attr, mid_hash)."""
     out = bytearray()
-    for ms, text, attr in elems:
-        body = _encode_elem(progress_ms=ms, content=text, attr=attr)
+    for elem in elems:
+        ms, text, attr = elem[0], elem[1], elem[2]
+        mid_hash = elem[3] if len(elem) > 3 else ""
+        body = _encode_elem(progress_ms=ms, content=text, attr=attr, mid_hash=mid_hash)
         out += _encode_tag(1, 2) + _encode_varint(len(body)) + body
     return bytes(out)
+
+
+def test_fetch_danmaku_classifies_author_from_view_owner_and_staff():
+    from harvest.player_api import fetch_danmaku
+
+    canonical = _canonical(part=1)
+    view_payload = {
+        "code": 0,
+        "data": {
+            "aid": 42, "cid": 100, "title": "T", "desc": "d", "duration": 600,
+            "owner": {"mid": 7, "name": "U"},
+            "staff": [{"mid": 7, "title": "UP主"}, {"mid": 99, "title": "配音"}],
+            "stat": {"danmaku": 3},
+            "pages": [{"page": 1, "cid": 100, "part": "P1", "duration": 600}],
+        },
+    }
+    seg1 = _encode_seg([
+        (1000, "owner speaks", 0, _mid_hash(7)),
+        (2000, "staff speaks", 0, _mid_hash(99)),
+        (3000, "crowd speaks", 0, _mid_hash(555)),
+    ])
+    opener = _FakeOpener({
+        _view_url(canonical): view_payload,
+        _seg_url(100, 1): seg1,
+        _seg_url(100, 2): b"",
+    })
+
+    result = fetch_danmaku(canonical, Settings(), opener=opener)
+
+    assert [r.text for r in result.records] == ["owner speaks", "staff speaks", "crowd speaks"]
+    assert [r.author for r in result.records] == ["owner", "staff", None]
 
 
 def test_fetch_danmaku_pages_segments_until_empty_and_orders_chronologically():

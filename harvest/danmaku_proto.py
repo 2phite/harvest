@@ -29,6 +29,7 @@ class RawDanmaku:
     text: str
     high_like: bool = False
     mid_hash: str = ""  # bilibili midHash (field 6): crc32 hex of the poster's mid; "" if absent
+    author: str | None = None  # "owner"/"staff" once resolved vs the video's author mids; else None
 
 
 def _varint(buf: bytes, pos: int) -> tuple[int, int]:
