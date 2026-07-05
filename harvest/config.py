@@ -140,6 +140,9 @@ class Settings:
     scene_threshold: float = 27.0  # PySceneDetect ContentDetector default (secondary signal)
     # hamming collapse; calibrated step 4 (within-slide jitter <10, slide cut >=16)
     phash_dedup_threshold: int = 10
+    # hard ceiling on captioned frames per part; uniform-thinned AFTER dedup. The genre-agnostic
+    # cost bound — continuous-motion video defeats phash dedup, so a cap is what stops the blowup.
+    max_frames: int = 150
     chunk_window_s: float = 60.0  # D3 wall-clock chunk fallback; 60s = minute-aligned buckets
     # Danmaku bucket width — deliberately narrower than chunk_window_s and INDEPENDENT of it.
     # 15s tracks the crowd's real pace: an empirical probe (6 videos, 5.3k danmaku) found one
@@ -190,6 +193,8 @@ class Settings:
             s.cache_dir = Path(os.environ["HARVEST_CACHE_DIR"])
         if os.environ.get("HARVEST_OUT_DIR"):
             s.out_dir = Path(os.environ["HARVEST_OUT_DIR"])
+        if os.environ.get("HARVEST_MAX_FRAMES"):
+            s.max_frames = int(os.environ["HARVEST_MAX_FRAMES"])
         s.ffmpeg_path = find_ffmpeg()
         s.aria2c_path = find_aria2c()
         s.js_runtime = find_js_runtime()
