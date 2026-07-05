@@ -1,10 +1,67 @@
 from harvest.config import AutoSubNet
 from harvest.schema import Segment
 from harvest.providers.youtube_autosub import (
+    _is_clean_bcp47,
     clean_srt_segments,
     pick_auto_key,
+    pick_human_key,
     structural_net,
 )
+
+
+def test_is_clean_bcp47_accepts_bare_language():
+    assert _is_clean_bcp47("en") is True
+
+
+def test_is_clean_bcp47_accepts_region_and_script():
+    assert _is_clean_bcp47("de-DE") is True       # 2-alpha region
+    assert _is_clean_bcp47("zh-Hant") is True      # 4-alpha script
+    assert _is_clean_bcp47("es-419") is True       # 3-digit region
+    assert _is_clean_bcp47("zh-Hant-CN") is True   # script + region
+
+
+def test_is_clean_bcp47_rejects_hash_suffixed_keys():
+    # yt-dlp's community-translation / multi-track disambiguation keys — a trailing segment that
+    # is neither a valid region nor script subtag. These must never be treated as a clean tag.
+    assert _is_clean_bcp47("en-US-njLgzgtehjs") is False
+    assert _is_clean_bcp47("en-eEY6OEpapPo") is False
+
+
+def test_pick_human_key_exact_wins():
+    subs = {"en": [{"ext": "vtt"}], "de-DE": [{"ext": "vtt"}]}
+    assert pick_human_key(subs, "en") == "en"
+
+
+def test_pick_human_key_regional_target_matches_bare():
+    # info["language"] "en-US" but the human track is keyed "en".
+    assert pick_human_key({"en": [{"ext": "vtt"}]}, "en-US") == "en"
+
+
+def test_pick_human_key_bare_target_matches_regional():
+    # info["language"] "de" but the only human German track is keyed "de-DE".
+    assert pick_human_key({"de-DE": [{"ext": "vtt"}], "en": [{"ext": "vtt"}]}, "de") == "de-DE"
+
+
+def test_pick_human_key_matches_script_variant():
+    assert pick_human_key({"zh-Hans": [{"ext": "vtt"}]}, "zh-Hant") == "zh-Hans"
+
+
+def test_pick_human_key_ignores_community_translation_keys():
+    # Despacito shape: original is es; the en-* keys are community English TRANSLATIONS with a
+    # hash suffix. A bare "en" target must NOT reuse a translation as the original -> None.
+    subs = {"es": [{"ext": "vtt"}], "en-eEY6OEpapPo": [{"ext": "vtt"}],
+            "en-US-njLgzgtehjs": [{"ext": "vtt"}]}
+    assert pick_human_key(subs, "en") is None
+
+
+def test_pick_human_key_no_same_base_returns_none():
+    assert pick_human_key({"fr": [{"ext": "vtt"}], "es": [{"ext": "vtt"}]}, "de") is None
+
+
+def test_pick_human_key_prefers_fuller_then_shorter():
+    # Target "en-US": a key starting with the full target wins over a bare same-base key.
+    subs = {"en": [{"ext": "vtt"}], "en-US": [{"ext": "vtt"}]}
+    assert pick_human_key(subs, "en-US") == "en-US"
 
 
 def test_pick_auto_key_prefers_orig_over_plain_for_known_lang():

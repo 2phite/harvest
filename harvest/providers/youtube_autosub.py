@@ -17,6 +17,42 @@ def _lang_base(tag: str) -> str:
     return tag.split("-", 1)[0]
 
 
+def _is_clean_bcp47(tag: str) -> bool:
+    """True iff `tag` is a well-formed BCP-47 language tag: an alphabetic primary subtag followed
+    ONLY by valid script (4-alpha, `Hant`) and/or region (2-alpha `US` / 3-digit `419`) subtags.
+
+    This is the human-`subtitles` safety rail. Unlike `automatic_captions`, human tracks have no
+    `-orig` original-audio marker, and `subtitles` also carries hash-suffixed community-translation
+    tracks (`en-US-njLgzgtehjs`) and yt-dlp's per-track disambiguation suffixes (`en-eEY6OEpapPo`).
+    Both end in a segment that is neither a region nor a script subtag, so they fail this test and
+    are never matched as an original caption — the reason full primary-subtag fuzzy matching stays
+    forbidden on the human path (see SPEC §6)."""
+    parts = tag.split("-")
+    if not parts[0].isalpha():
+        return False
+    for sub in parts[1:]:
+        is_script = len(sub) == 4 and sub.isalpha()
+        is_region = (len(sub) == 2 and sub.isalpha()) or (len(sub) == 3 and sub.isdigit())
+        if not (is_script or is_region):
+            return False
+    return True
+
+
+def pick_human_key(subtitles: dict, target: str) -> str | None:
+    """Choose the human-caption key for `target`, or None. Exact `subtitles[target]` wins; failing
+    that, the best same-base-language key that is a clean BCP-47 tag (`_is_clean_bcp47`) — a
+    region/script variant like `de`<->`de-DE`, `zh-Hant`<->`zh-Hans`, never a suffixed
+    community-translation key. Ranked: a key starting with the full target first, then shortest."""
+    if target in subtitles:
+        return target
+    base = _lang_base(target)
+    cands = sorted(
+        (k for k in subtitles if k != target and _lang_base(k) == base and _is_clean_bcp47(k)),
+        key=lambda k: (0 if k.startswith(target) else 1, len(k)),
+    )
+    return cands[0] if cands else None
+
+
 def pick_auto_key(automatic_captions: dict, target: str | None) -> str | None:
     """Choose the original-audio auto-caption key, or None (-> Whisper).
 
@@ -78,9 +114,9 @@ def clean_srt_segments(raw: str) -> list[Segment]:
 def structural_net(
     segments: list[Segment], duration_s: float, net: AutoSubNet
 ) -> tuple[bool, str]:
-    """Language-agnostic pass/fail on an auto-caption candidate. Returns (passed, reason). Any single
-    check failing -> reject (caller falls back to Whisper). Coverage and cps are skipped when the
-    duration is unknown/zero (presence still applies)."""
+    """Language-agnostic pass/fail on an auto-caption candidate. Returns (passed, reason). Any
+    single check failing -> reject (caller falls back to Whisper). Coverage and cps are skipped when
+    the duration is unknown/zero (presence still applies)."""
     n = len(segments)
     if n < net.min_cues:
         return False, f"only {n} cues (< {net.min_cues})"

@@ -78,10 +78,11 @@ duration, parts) so a caller can estimate workload before an `ingest` run. See
 
 - **bilibili:** prefer human/AI captions gated for quality (`#6357` part-match + quality gate); fall
   back to Whisper. Auto-caption reuse is labeled `auto-sub`.
-- **YouTube:** `human-sub > auto-sub > whisper`. Prefer human captions on an exact original-language
-  key (`human-sub`); else the original-language auto-caption (`auto-sub`) when it clears a structural
-  validity net (presence, duration-coverage, chars-per-second floor); else Whisper. Auto-caption reuse
-  is a cost optimization — `--force-whisper` overrides to always transcribe.
+- **YouTube:** `human-sub > auto-sub > whisper`. Prefer human captions on the original-language key —
+  exact, else a clean region/script variant like `de-DE`/`zh-Hant`, never a hash-suffixed
+  community-translation key (`human-sub`); else the original-language auto-caption (`auto-sub`) when it
+  clears a structural validity net (presence, duration-coverage, chars-per-second floor); else Whisper.
+  Auto-caption reuse is a cost optimization — `--force-whisper` overrides to always transcribe.
 
 ## Output
 

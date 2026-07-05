@@ -1,10 +1,11 @@
 """YouTubeProvider (SPEC §6): native yt-dlp metadata + tiered caption reuse.
 
 Transcript tier order: human-sub > auto-sub > whisper. target_lang = pinned --lang, else
-info["language"], else None. Human `subtitles[target]` on an exact key -> human-sub. Else the
-original-audio auto-caption (key `target-orig`/`target`, or the sole `*-orig` when target is unknown),
-fetched as de-rolled SRT and accepted only if it clears the structural net (harvest/providers/
-youtube_autosub.py). Anything else -> Whisper. --force-whisper (handled in cli) skips all of this."""
+info["language"], else None. A human `subtitles` track for `target` -> human-sub: exact key, else a
+clean BCP-47 region/script variant (never a hash-suffixed community-translation key; see
+youtube_autosub.pick_human_key). Else the original-audio auto-caption (key `target-orig`/`target`, or
+the sole `*-orig` when target is unknown), fetched as de-rolled SRT and accepted only if it clears the
+structural net. Anything else -> Whisper. --force-whisper (handled in cli) skips all of this."""
 
 from __future__ import annotations
 
@@ -17,7 +18,12 @@ import yt_dlp
 from ..config import Settings
 from ..subtitles import parse_vtt, ydl_opts
 from .base import Canonical, SourceMetadata, SubtitleOutcome, register
-from .youtube_autosub import clean_srt_segments, pick_auto_key, structural_net
+from .youtube_autosub import (
+    clean_srt_segments,
+    pick_auto_key,
+    pick_human_key,
+    structural_net,
+)
 
 _ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
@@ -133,17 +139,21 @@ class YouTubeProvider:
         fetch = fetch_url or self._fetch_url
         target = self._target_lang(info, pinned_lang)
 
-        # Tier 1 — human captions on an exact original-language key. automatic_captions excluded here.
+        # Tier 1 — human captions on the original-language key (exact, else a clean region/script
+        # variant; never a hash-suffixed community-translation key). automatic_captions excluded.
         if target is not None:
-            tracks = (info.get("subtitles") or {}).get(target)
-            if tracks:
+            subtitles = info.get("subtitles") or {}
+            key = pick_human_key(subtitles, target)
+            if key is not None:
+                tracks = subtitles[key]
                 vtt = next((t for t in tracks if t.get("ext") == "vtt"), None) or tracks[0]
                 segments = parse_vtt(fetch(vtt["url"], settings))
                 if segments:
+                    match = "exact-key match" if key == target else "base-subtag match"
                     return SubtitleOutcome(
                         accepted=True, source="human-sub",
-                        source_reason=f"human-sub (exact-key match: {target})",
-                        language=target, segments=segments, quality_gate=None,
+                        source_reason=f"human-sub ({match}: {key})",
+                        language=key, segments=segments, quality_gate=None,
                     )
 
         # Tier 2 — original-language auto-caption, structural net decides accept vs Whisper.

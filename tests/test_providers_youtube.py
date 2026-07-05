@@ -126,6 +126,37 @@ def test_fetch_subtitle_pinned_lang_overrides_and_reuses_track():
     assert got.language == "es" and got.segments[0].text == "hola"
 
 
+def test_fetch_subtitle_reuses_regional_variant_human_track():
+    # info["language"] "de" but the only human German track is keyed "de-DE" (a clean region tag).
+    # Tier 1 must still find it as human-sub rather than skipping to auto/whisper.
+    p = YouTubeProvider()
+    info = _auto_info("de", {"de-orig": [{"ext": "srt", "url": "u"}]},
+                      subtitles={"de-DE": [{"ext": "vtt", "url": "h"}]})
+
+    def _fetch(url, settings):
+        assert url == "h", "must fetch the human de-DE track, not the auto track"
+        return "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhallo\n"
+
+    got = p.fetch_subtitle(_canonical(), Settings(), _meta_for(info), info=info, fetch_url=_fetch)
+    assert got.accepted and got.source == "human-sub" and got.language == "de-DE"
+    assert got.segments[0].text == "hallo"
+
+
+def test_fetch_subtitle_ignores_community_translation_human_key():
+    # Despacito shape: bare "en" target, but the only en-* human keys are hash-suffixed community
+    # TRANSLATIONS. Tier 1 must NOT reuse a translation as human-sub -> falls through (here to None
+    # since there is no en auto track).
+    p = YouTubeProvider()
+    info = _auto_info("en", {}, subtitles={
+        "es": [{"ext": "vtt", "url": "s"}],
+        "en-eEY6OEpapPo": [{"ext": "vtt", "url": "t1"}],
+        "en-US-njLgzgtehjs": [{"ext": "vtt", "url": "t2"}],
+    })
+    got = p.fetch_subtitle(_canonical(), Settings(), _meta_for(info),
+                           info=info, fetch_url=lambda url, settings: "")
+    assert got is None
+
+
 def _auto_info(language, automatic_captions, *, subtitles=None, duration=300):
     # Minimal inline info dict for the auto-caption path (fixtures are vtt-only, no -orig/srt).
     return {
