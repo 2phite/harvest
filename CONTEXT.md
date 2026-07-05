@@ -34,7 +34,9 @@ authored content are carve-outs that rank above the crowd mirror.
 **Frame caption**:
 The visual note harvest extracts per kept frame. Has two distinct halves: the **OCR** (verbatim
 on-screen text) and the **visual description** (a prose description of figures/diagrams/scene/
-layout). Both are produced today by one vision-model call.
+layout). Both are produced by one vision-model call, shaped by a caller-supplied **VisionConfig**.
+A frame may instead be a **SKIP frame** — the model judges it carries no caption-worthy content —
+leaving both halves null.
 _Avoid_: "analyze" (say caption); conflating "OCR" (text only) with the whole caption.
 
 ## Uploader-initiated interactions
@@ -117,16 +119,39 @@ A comment bilibili surfaces as highly-upvoted — the reply-section analogue of 
 ## Vision
 
 **Vision stage**:
-The frame pipeline: download video → sample frames → dedup → produce a **Frame caption** per kept
-frame. Today it is all-or-nothing (`--no-vision` skips the whole stage) and tuned for lecture
-slides.
+The frame pipeline: download video → sample frames → dedup → **cap** → produce a **Frame caption**
+per surviving frame. Skippable whole (`--no-vision`), and — since captioning is the cost sink —
+splittable into two phases: `--frames-only` extracts frames and stops (cheap, no captioning), then a
+`--vision-config` run captions them. harvest owns no genre knowledge; the caption lens is
+caller-supplied (see **VisionConfig**).
 
-**OCR-only**:
-A candidate reduced mode that produces only the OCR half of a **Frame caption**, dropping the
-visual description. A *shape/cost* lever, not a separate capability.
+**VisionConfig**:
+The small caller-authored config (a JSON file, `--vision-config`) that fills a fixed caption-prompt
+scaffold's four **slots** — `focus` (what the notes are for), `look_for` (where/what to attend),
+`ocr_scope` (which text to transcribe; gated so it can exclude a **Burned-in caption**), and
+`describe` (what the description covers) — plus optional frame-selection overrides (`sample_interval`,
+`dedup_threshold`, `max_frames`). It moves per-genre judgment OUT of harvest to the invoker (the
+SPEC §1 seam): a vision-capable caller **peeks** at extracted frames, deduces the genre, and writes
+the config. Unset → a tuned lecture-slide default (harvest's original sweet spot).
+_Avoid_: "genre preset" (harvest ships no genre taxonomy — only raw slots + one default).
+
+**Frame cap** (`max_frames`):
+The hard ceiling on captioned frames per part, thinned uniformly after dedup. The genre-agnostic
+cost bound: continuous-motion video (cooking, gameplay) drifts every sample, so phash dedup barely
+fires and a 20-min clip would otherwise caption 100+ frames. Distinct from **dedup** (which collapses
+*near-identical* frames); the cap bounds what dedup structurally cannot.
+
+**SKIP frame**:
+A sampled+kept frame the vision model judges carries no caption-worthy content — its OCR and
+description are both null, it stays in bundle.json with `skipped: true`, and it renders nothing in
+bundle.md. The per-frame counterpart of the **Frame cap**: the cap bounds *how many* frames are
+captioned; SKIP drops the ones that turn out empty (e.g. a talking-head frame whose only text is the
+running **Burned-in caption**, already carried by the transcript).
 
 **Burned-in caption** (硬字幕 / hard-sub):
-Speech-subtitle text etched into the video image itself (common on bilibili across genres),
-distinct from a selectable subtitle track or the **Transcript**. Because it is *pixels*, the
-vision stage's OCR half reads it — making that text redundant with the transcript.
+Speech-subtitle text etched into the video image itself (common on bilibili across genres), distinct
+from a selectable subtitle track or the **Transcript**. Because it is *pixels*, the vision stage's
+OCR half reads it — making that text redundant with the transcript. A **VisionConfig** `ocr_scope`
+slot can instruct the model to exclude it; this is **caller-gated, never default** (a YouTube video
+may carry no hard-sub, where the on-screen text IS the payload — see the math-explainer probe).
 _Avoid_: "subtitle" (that implies a selectable track), "caption" (overloaded with frame caption).

@@ -25,8 +25,14 @@ There is no bare-url form. Supported sources: `bilibili.com`, `youtube.com`.
 --force-whisper skip subtitle reuse, always transcribe
 --lang CODE     pin transcription language (default: zh for bilibili, auto-detect for YouTube)
 --robust        disable condition_on_previous_text (repetition-loop lectures)
---no-vision     skip frame captioning
+--no-vision     skip the frame stage entirely (no frames, no captions)
+--frames-only   run download + sample + dedup + cap, then STOP before captioning (the cheap peek
+                phase: lets a vision-capable caller inspect out/<id>-p<part>/frames/ and author a
+                --vision-config before spending the captioning cost). No captions written.
+--vision-config FILE   JSON VisionConfig shaping the caption prompt + frame selection (see below);
+                omitted → a tuned lecture-slide default
 --dedup-threshold N   phash hamming distance to collapse near-duplicate frames (default 10)
+--max-frames N  hard ceiling on captioned frames per part, uniform-thinned after dedup (default 150)
 --out DIR       output root (default ./out)
 --no-frame-images     omit PNGs from out/ (JSON still records phash/ts/caption)
 --danmaku       opt-in: fetch + mirror the bilibili audience danmaku track (bilibili.com only;
@@ -146,12 +152,53 @@ Output is `out/<id>-p<part>/` containing `bundle.md`, `bundle.json`, and `frames
     "quality_gate": { … } | null,      // populated only when a caption was gated (bilibili)
     "segments": [ { "start": 0.0, "end": 4.2, "text": "…" } ]
   },
-  "frames": [ { "ts": 12.5, "path": "frames/000012_500.png", "phash": "…", "caption": "…", "ocr": "…" } ],
+  "frames": [
+    { "ts": 12.5, "path": "frames/000012_500.png", "phash": "…", "caption": "…", "ocr": "…", "skipped": false },
+    { "ts": 18.0, "path": "frames/000018_000.png", "phash": "…", "caption": null, "ocr": null, "skipped": true }
+  ],
   "danmaku": null,                     // populated only when `--danmaku` ran on a supporting platform
   "interactions": null,                // populated only when `--interactions` ran on a supporting platform
-  "meta": { "cookies_used": true, "referer_used": true, "vision_model": "…", "tool_version": "…" }
+  "meta": { "cookies_used": true, "referer_used": true, "vision_model": "…", "vision_config": { … } | null, "tool_version": "…" }
 }
 ```
+
+### `Frame` shape + `VisionConfig` (matches `schema.py::Frame`/`VisionConfig`)
+
+A `Frame` is one kept sample. `caption` (visual description) and `ocr` (verbatim on-screen text) are
+both nullable. **`skipped`** (bool, default `false`) is additive to the `1.0` contract: `true` marks
+a frame the vision model judged carried no caption-worthy content — `caption`/`ocr` are both `null`
+and the frame renders nothing in `bundle.md` (it stays in `bundle.json` for provenance). A frame with
+`skipped: false` and null caption/ocr means "captioned, genuinely nothing found" (rare); Atlas can
+treat both as "no visual note here." **Nulls and `skipped` frames are normal — tolerate, don't fail.**
+
+**Two-phase vision (peek then caption).** Captioning is the cost sink, so the frame stage is
+splittable. `harvest ingest <url> --frames-only` writes `out/<id>-p<part>/frames/` (and a
+frames-only `bundle.json`: `frames` populated with `ts`/`path`/`phash`, `caption`/`ocr` null) and
+stops — no Whisper cost is spent on captioning, letting a vision-capable caller inspect the frames.
+A follow-up `harvest ingest <url> --vision-config vision.json` captions from cache. Frame extraction
+is cached, so the second run neither re-downloads nor re-transcribes; the VisionConfig's hash is part
+of the caption cache key, so changing it re-captions **only**.
+
+**`VisionConfig`** (the `--vision-config` JSON; echoed into `meta.vision_config` for provenance,
+`null` when unset). harvest owns no genre taxonomy — the caller supplies the caption lens:
+
+```jsonc
+{
+  "focus":      "the cooking step and dish being prepared",   // what the notes are FOR
+  "look_for":   "the dish, ingredients, technique, and any recipe/step-number overlay; ignore the bottom hard-sub",
+  "ocr_scope":  "overlay text (recipe cards, labels, step numbers) verbatim; EXCLUDE the running bottom subtitle",
+  "describe":   "the dish, ingredients, and cooking stage",
+  "sample_interval": 6.0,     // optional frame-selection overrides; omit for defaults
+  "dedup_threshold": 10,
+  "max_frames": 150
+}
+```
+
+The four prompt slots fill a fixed scaffold whose output keeps the `OCR:` / `DESCRIPTION:` contract
+(so `caption`/`ocr` parse unchanged); `ocr_scope` is the **caller-gated** excluder of a redundant
+burned-in caption — never applied by default, since on some videos the on-screen text IS the payload.
+Any omitted field uses the tuned lecture default. Frame-selection overrides that differ from the
+defaults change the frame set, hence re-extract (their own cache key).
 
 ### `Danmaku` shapes (matches `schema.py::Danmaku`/`DanmakuWindow`/`DanmakuLine`) — `--danmaku` opt-in
 
