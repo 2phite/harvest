@@ -118,3 +118,73 @@ def test_download_video_bilibili_keeps_aria2c(tmp_path, monkeypatch):
     _fake_ydl_factory(monkeypatch, info, lambda: target.write_bytes(b"x"))
     F.download_video(canon, s)
     assert _FakeYDL.captured["external_downloader"] == {"default": "C:/aria2c.exe"}
+
+
+# --- Task 3: cap_frames uniform-thinning tests ---
+
+
+from harvest.frames import cap_frames
+
+
+def test_cap_frames_under_limit_returns_all():
+    items = [(float(i), f"{i:016x}") for i in range(5)]
+    assert cap_frames(items, 10) == items
+
+
+def test_cap_frames_over_limit_thins_to_exactly_max():
+    items = [(float(i), f"{i:016x}") for i in range(100)]
+    capped = cap_frames(items, 10)
+    assert len(capped) == 10
+    # order preserved, first kept, spread across the range
+    assert capped[0] == items[0]
+    tss = [ts for ts, _ in capped]
+    assert tss == sorted(tss)
+    assert tss[-1] >= 80  # spread reaches near the end, not just the first 10
+
+
+def test_cap_frames_equal_to_limit_returns_all():
+    items = [(float(i), f"{i:016x}") for i in range(10)]
+    assert cap_frames(items, 10) == items
+
+
+# --- final-review Finding 1: sample_interval must be folded into the raw-frame cache key -------
+
+
+def _make_png(path):
+    from PIL import Image
+
+    Image.new("RGB", (4, 4), color=(1, 2, 3)).save(path)
+
+
+def test_extract_frames_reextracts_when_sample_interval_changes(tmp_path, monkeypatch):
+    """PROTOCOL.md: frame-selection overrides that differ from defaults must change the raw-frame
+    cache key so a changed sample_interval re-extracts instead of silently reusing stale frames at
+    mislabeled timestamps (BLOCKER finding)."""
+    from harvest import frames as F
+    from harvest.providers.base import Canonical
+
+    captured_raw_dirs = []
+
+    def fake_bulk_sample(video_path, interval, raw_dir, ffmpeg):
+        captured_raw_dirs.append(raw_dir)
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        p = raw_dir / "f_000000.png"
+        if not p.exists():
+            _make_png(p)
+        return [(0.0, p)]
+
+    monkeypatch.setattr(F, "_bulk_sample", fake_bulk_sample)
+
+    canonical = Canonical("bilibili.com", "BVx", 1, "u")
+    video_path = tmp_path / "video.mp4"
+    video_path.write_bytes(b"x")
+
+    s1 = Settings(cache_dir=tmp_path, ffmpeg_path="ffmpeg", sample_interval_s=6.0)
+    s2 = Settings(cache_dir=tmp_path, ffmpeg_path="ffmpeg", sample_interval_s=3.0)
+
+    F.extract_frames(canonical, video_path, s1)
+    F.extract_frames(canonical, video_path, s1)  # same interval -> stable raw_dir
+    F.extract_frames(canonical, video_path, s2)  # different interval -> distinct raw_dir
+
+    assert captured_raw_dirs[0] == captured_raw_dirs[1]
+    assert captured_raw_dirs[0] != captured_raw_dirs[2]

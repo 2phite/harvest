@@ -108,3 +108,14 @@ def test_settings_has_youtube_auto_net_defaults():
 def test_two_settings_do_not_share_one_youtube_auto_instance():
     # default_factory, not a shared mutable default
     assert Settings().youtube_auto is not Settings().youtube_auto
+
+
+def test_max_frames_default_is_150():
+    from harvest.config import Settings
+    assert Settings().max_frames == 150
+
+
+def test_max_frames_env_override(monkeypatch):
+    from harvest.config import Settings
+    monkeypatch.setenv("HARVEST_MAX_FRAMES", "40")
+    assert Settings.load().max_frames == 40

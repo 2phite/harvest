@@ -30,8 +30,11 @@ architecture is built so future outputs (raw media collection, thumbnails, AV re
 
 ## 2. Scope
 
-**v1 targets:** single **public** videos on **bilibili.com** and **YouTube**. Content is "people
-talking" (lectures, talks) — single-speaker, slide-or-talking-head.
+**v1 targets:** single **public** videos on **bilibili.com** and **YouTube**. The tuned default is
+"people talking" (lectures, talks) — single-speaker, slide-or-talking-head — but the **vision stage
+is caller-parameterized** (§5, §8), so off-genre content (cooking, gameplay, MVs, screencasts,
+tutorials) is captioned to fit rather than forced through a slide lens. harvest itself stays
+genre-agnostic: the per-genre judgment lives in the caller-supplied VisionConfig, not in harvest.
 
 **Deferred** (architecture accommodates, not built): playlists, live VODs, members-only/age-gated
 bulk flows, `bilibili.tv`, and roadmap stages (thumbnail metadata, AV remux for collection).
@@ -103,8 +106,12 @@ heavy, separately managed, and potentially shared with Atlas. Nothing else does.
    duration, `published_at`, pages/parts). One cheap call; the source of truth for bundle metadata.
 3. **Transcript decision** — see §6.
 4. **Frames** (unless `--no-vision`): periodic sampling (`ffmpeg fps=1/interval`, default 6s) +
-   phash dedup **before** captioning (captioning is the cost sink; order matters). Then caption each
-   surviving frame independently with the VL model.
+   phash dedup + a hard **`max_frames` cap** (uniform thinning) **before** captioning (captioning is
+   the cost sink; order matters). Then caption each surviving frame with the VL model, its prompt
+   shaped by a caller-supplied **VisionConfig** (§8); a frame the model judges empty is **SKIPPED**
+   (null caption, not forced output). Because captioning is the sink, the stage is splittable:
+   `--frames-only` extracts frames and stops, so a vision-capable caller can peek at them and author
+   the config before a `--vision-config` run captions from cache.
 5. **Merge** — align transcript segments + frame notes on a shared timeline; emit `bundle.json`
    (precise backing record) and `bundle.md` (the product Atlas ingests).
 
@@ -234,9 +241,37 @@ no-captions baseline → `whisper`.
 - **bundle.md is slide-chunked, always.** Chunk = "what was on screen + the speech while it was up."
   Boundaries = deduped frame timestamps when vision is on, else a fixed wall-clock window (60s).
   Segments assigned whole by start timestamp, never split. One coarse `[mm:ss]` header per chunk.
-- **Frame candidates = periodic sampling + phash dedup**, not scene-cut detection: target content is
-  continuous-shot screen recordings with soft slide transitions (no hard cuts). Same goal ("one frame
-  per stable slide"), more robust mechanism. Dedup compares against the last *kept* frame.
+- **Frame candidates = periodic sampling + phash dedup + a hard `max_frames` cap**, not scene-cut
+  detection. Periodic+phash targets continuous-shot screen recordings with soft slide transitions
+  (no hard cuts): "one frame per stable slide", dedup comparing against the last *kept* frame.
+  Continuous-motion off-genre content (cooking, gameplay) defeats *any* dedup — every sample
+  genuinely differs — so the cap (uniform thinning after dedup) is the genre-agnostic cost bound;
+  scene-change detection was reconsidered and rejected (it doesn't collapse continuous motion either,
+  and would reverse this decision). The cap mechanism is borrowed from claude-real-video (crv) — the
+  one part of that keyframe tool worth adopting; harvest keeps its own authenticated-acquisition /
+  provenance / danmaku / Atlas-contract identity rather than merging.
+- **Vision is caller-parameterized, not genre-aware (the VisionConfig seam).** harvest owns no genre
+  taxonomy — that is interpretation, and §1 keeps interpretation downstream in Atlas. The caption
+  prompt is a fixed scaffold with four caller-filled slots (`focus` / `look_for` / `ocr_scope` /
+  `describe`, supplied as a JSON `--vision-config`); unset slots fall back to a tuned lecture default
+  (the sweet spot is unchanged — in fact slightly improved, since the default excludes burned-in
+  caption/watermark chrome). Empirically one scaffold reaches ~89% of a genre-bespoke prompt across
+  12 genres (96% on lectures, no regression), which is why raw slots beat both a hardcoded prompt and
+  a harvest-owned genre-preset table. The scaffold keeps the two-half `OCR` / `DESCRIPTION` output
+  contract intact; `ocr_scope` may carry light role-labels and is the caller-gated excluder of a
+  redundant **Burned-in caption** — never a default, since some videos' on-screen text *is* the
+  content.
+- **A frame may be SKIPPED (empty-caption branch).** The scaffold lets the model answer "no
+  caption-worthy content" (both halves null, `skipped: true`) instead of being forced to emit
+  something. Without it, talking-head / B-roll frames re-encode the burned-in caption harvest already
+  holds as the transcript — the single biggest off-genre quality fix, and it pairs with the cap (the
+  cap bounds *how many* frames are captioned; SKIP drops the ones that come back empty).
+- **The vision stage splits at the cost sink (two-phase peek).** `--frames-only` runs
+  download+sample+dedup+cap and stops before captioning; a vision-capable caller reads a few frames,
+  deduces the genre, and writes the VisionConfig; a second `--vision-config` run captions from cache
+  (the config hash joins the caption stage's cache key, so re-configuring re-captions but never
+  re-downloads/re-transcribes). This moves the vision-spend decision from a blind metadata/thumbnail
+  guess to the point where the deciding information — the actual frames — exists.
 - **Cache keys = identity + stage-param-hash** (§5). The bare key silently returns a cached `auto-sub`
   transcript when you pass `--force-whisper` — a correctness bug, not just staleness.
 - **Projector check = fingerprint-armed nonce-OCR probe.** A missing mmproj makes the VL model return
@@ -315,6 +350,15 @@ harvest/
 These are economy/purity trade-offs surfaced by the YouTube whole-branch review. None affect
 correctness; each is a deliberate consequence of keeping the provider seam clean (metadata does not
 leak provider-internal fetch state — e.g. bilibili `ViewData` — through `SourceMetadata`).
+
+- **Structured frame field for tabular / UI-state content (deferred).** The one place the four-slot
+  scaffold underperforms a genre-bespoke prompt is dense tables / game UI selection-state / ranked
+  stat tables, which the single-paragraph `DESCRIPTION` half flattens (loses row×column or
+  active/dimmed fidelity). An optional structured output field would close it, at the cost of a
+  heavier schema + renderer + PROTOCOL change — deferred as its own issue.
+- **Scene-change frame sampling (rejected for now, revisitable).** Would help fast-cut content but
+  not the continuous-motion majority, and reverses the periodic-sample decision above; the
+  `max_frames` cap covers the cost bound more cheaply.
 
 - **Redundant per-part metadata fetch (bilibili).** `fetch_metadata` runs the view API, then
   `fetch_subtitle` re-runs `extract_info` + a second view call (more for `part > 1`). `meta` is passed

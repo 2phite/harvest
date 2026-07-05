@@ -369,8 +369,8 @@ def test_process_part_fetches_metadata_once_and_shares_it(monkeypatch):
 
     monkeypatch.setattr(cli, "decide_transcript", fake_decide)
 
-    def fake_build(canonical, m, transcript, frames, settings, *, vision_model=None, danmaku=None,
-                   interactions=None):
+    def fake_build(canonical, m, transcript, frames, settings, *, vision_model=None,
+                   vision_config=None, danmaku=None, interactions=None):
         seen["build_meta"] = m
         return Bundle(platform="youtube.com", id="x", part=1, url=canonical.url, title="t",
                       fetched_at="2026-07-02T00:00:00Z", transcript=transcript, frames=[],
@@ -402,8 +402,8 @@ def _danmaku_setup(monkeypatch, *, provider, danmaku_result=None):
 
     monkeypatch.setattr(cli, "decide_transcript", fake_decide)
 
-    def fake_build(canonical, m, transcript, frames, settings, *, vision_model=None, danmaku=None,
-                   interactions=None):
+    def fake_build(canonical, m, transcript, frames, settings, *, vision_model=None,
+                   vision_config=None, danmaku=None, interactions=None):
         calls["build_danmaku"] = danmaku
         return Bundle(platform=canonical.platform, id=canonical.id, part=canonical.part,
                       url=canonical.url, title="t", fetched_at="2026-07-02T00:00:00Z",
@@ -543,3 +543,77 @@ def test_process_part_without_danmaku_flag_leaves_bundle_danmaku_none_and_skips_
 
     assert calls["represent_danmaku"] is None
     assert calls["build_danmaku"] is None
+
+
+def test_parse_args_vision_flags():
+    from harvest.cli import parse_args
+    args = parse_args([
+        "ingest", "https://www.bilibili.com/video/BVx",
+        "--frames-only", "--max-frames", "40", "--vision-config", "cfg.json",
+    ])
+    assert args.frames_only is True
+    assert args.max_frames == 40
+    assert args.vision_config == "cfg.json"
+
+
+def test_apply_overrides_max_frames():
+    from types import SimpleNamespace
+    from harvest.cli import apply_overrides
+    from harvest.config import Settings
+    settings = Settings()
+    args = SimpleNamespace(
+        out=None, dedup_threshold=None, scene_threshold=None, max_frames=40,
+    )
+    apply_overrides(settings, args)
+    assert settings.max_frames == 40
+
+
+def test_load_vision_config_reads_json(tmp_path):
+    from harvest.cli import _load_vision_config
+    from types import SimpleNamespace
+    cfg = tmp_path / "vision.json"
+    cfg.write_text('{"focus": "the dish", "max_frames": 30}', encoding="utf-8")
+    out = _load_vision_config(SimpleNamespace(vision_config=str(cfg)))
+    assert out.focus == "the dish"
+    assert out.max_frames == 30
+    assert _load_vision_config(SimpleNamespace(vision_config=None)) is None
+
+
+def test_caption_cache_key_differs_by_config(tmp_path):
+    from harvest.cli import _caption_cache_key
+    from harvest.config import Settings
+    from harvest.providers.base import Canonical
+    from harvest.schema import Frame, VisionConfig
+    settings = Settings()
+    canonical = Canonical(platform="bilibili.com", id="BVx", part=1, url="u")
+    frames = [Frame(ts=0.0, phash="aa"), Frame(ts=6.0, phash="bb")]
+    k_default = _caption_cache_key(canonical, frames, settings, None)
+    k_cooking = _caption_cache_key(canonical, frames, settings, VisionConfig(focus="the dish"))
+    assert k_default != k_cooking
+
+
+def test_caption_cache_key_ignores_frame_selection_fields(tmp_path):
+    """Final-review Finding 2: config_hash must hash only the four prompt slots. Two configs
+    with identical prompt slots but a different (non-firing) max_frames must produce the SAME
+    caption cache key -- the frameset (phash) component already captures any actual frame-set
+    change, so folding frame-selection fields into config_hash too just causes needless
+    re-captioning."""
+    from harvest.cli import _caption_cache_key
+    from harvest.config import Settings
+    from harvest.providers.base import Canonical
+    from harvest.schema import Frame, VisionConfig
+    settings = Settings()
+    canonical = Canonical(platform="bilibili.com", id="BVx", part=1, url="u")
+    frames = [Frame(ts=0.0, phash="aa"), Frame(ts=6.0, phash="bb")]
+
+    k_a = _caption_cache_key(canonical, frames, settings, VisionConfig(max_frames=50))
+    k_b = _caption_cache_key(canonical, frames, settings, VisionConfig(max_frames=200))
+    assert k_a == k_b
+
+    k_focus_a = _caption_cache_key(canonical, frames, settings, VisionConfig(focus="a"))
+    k_focus_b = _caption_cache_key(canonical, frames, settings, VisionConfig(focus="b"))
+    assert k_focus_a != k_focus_b
+
+    k_default = _caption_cache_key(canonical, frames, settings, None)
+    assert k_default != k_a
+    assert k_default != k_focus_a

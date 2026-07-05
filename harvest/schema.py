@@ -58,12 +58,29 @@ class Frame(BaseModel):
     phash: str
     caption: str | None = None
     ocr: str | None = None
+    skipped: bool = False  # true = vision model judged the frame empty (caption/ocr both null);
+    # kept in bundle.json for provenance, renders nothing in bundle.md. Additive to 1.0.
+
+
+class VisionConfig(BaseModel):
+    """Caller-supplied caption lens (--vision-config). harvest owns no genre taxonomy — the caller
+    fills the four prompt slots; any omitted slot uses the tuned lecture default. The three
+    frame-selection fields override Settings for this run (omit for defaults)."""
+
+    focus: str | None = None       # what the notes are FOR
+    look_for: str | None = None    # where/what to attend
+    ocr_scope: str | None = None   # which text to transcribe (caller-gated hard-sub excluder)
+    describe: str | None = None    # what the description paragraph covers
+    sample_interval: float | None = None
+    dedup_threshold: int | None = None
+    max_frames: int | None = None
 
 
 class Meta(BaseModel):
     cookies_used: bool  # "cookies supplied", NOT "server honored them" (D11)
     referer_used: bool
     vision_model: str | None = None
+    vision_config: "VisionConfig | None" = None  # the config used to caption (provenance); null when unset
     tool_version: str
 
 

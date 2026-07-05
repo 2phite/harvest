@@ -70,6 +70,18 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="opt-in: fetch bilibili command-danmaku aggregates — 投票 votes + 评分 grades "
              "(bilibili only; independent of --danmaku)",
     )
+    ingest.add_argument(
+        "--frames-only", action="store_true",
+        help="peek: extract + cap frames, write them + frames.json, STOP before captioning",
+    )
+    ingest.add_argument(
+        "--vision-config", default=None,
+        help="path to a JSON VisionConfig shaping the caption prompt + frame selection",
+    )
+    ingest.add_argument(
+        "--max-frames", type=int, default=None,
+        help="hard ceiling on captioned frames per part (default 150)",
+    )
 
     probe_cmd = sub.add_parser("probe", help="cheap pre-flight metadata probe, no media")
     probe_cmd.add_argument("url")
@@ -91,6 +103,8 @@ def apply_overrides(settings: Settings, args) -> list[str]:
             "--scene-threshold is deprecated and ignored (D13 replaced scene-cut detection "
             "with periodic-sample + phash dedup); use --dedup-threshold instead."
         )
+    if getattr(args, "max_frames", None) is not None:
+        settings.max_frames = args.max_frames
     return warnings
 
 
@@ -149,8 +163,30 @@ def _whisper(canonical, settings, args, *, reason, gate=None, lang=None) -> Tran
 
 
 def process_part(canonical: Canonical, settings: Settings, args) -> None:
+    config = _load_vision_config(args)
+    if config:
+        if config.sample_interval is not None:
+            settings.sample_interval_s = config.sample_interval
+        if config.dedup_threshold is not None:
+            settings.phash_dedup_threshold = config.dedup_threshold
+        if config.max_frames is not None:
+            settings.max_frames = config.max_frames
+
     provider = select_provider(canonical.url)
     meta = provider.fetch_metadata(canonical, settings)
+
+    if args.frames_only:
+        from .frames import download_video, extract_frames
+        from .merge import write_frames_only
+
+        print(f"[{canonical.id} p{canonical.part}] peek: preparing video + frames...")
+        video = download_video(canonical, settings)
+        frames, frame_sources = extract_frames(canonical, video, settings)
+        out = write_frames_only(canonical, frames, frame_sources, settings)
+        print(f"[{canonical.id} p{canonical.part}] {len(frames)} frames -> {out} "
+              f"(peek; no captions). Inspect frames/, author a --vision-config, then re-run.")
+        return
+
     transcript = decide_transcript(canonical, meta, settings, args)
 
     frames = []
@@ -164,7 +200,7 @@ def process_part(canonical: Canonical, settings: Settings, args) -> None:
         frames, frame_sources = extract_frames(canonical, video, settings)
         print(f"[{canonical.id} p{canonical.part}] {len(frames)} frames after dedup")
         if frames:
-            frames = _caption(canonical, frames, frame_sources, settings)
+            frames = _caption(canonical, frames, frame_sources, settings, config)
             vision_model = settings.lmstudio_vision_model
 
     danmaku = None
@@ -195,7 +231,8 @@ def process_part(canonical: Canonical, settings: Settings, args) -> None:
 
     bundle = build_bundle(
         canonical, meta, transcript, frames, settings,
-        vision_model=vision_model, danmaku=danmaku, interactions=interactions,
+        vision_model=vision_model, vision_config=config,
+        danmaku=danmaku, interactions=interactions,
     )
     out = write_bundle(
         bundle, settings, frame_sources=frame_sources, frame_images=not args.no_frame_images
@@ -207,16 +244,48 @@ def process_part(canonical: Canonical, settings: Settings, args) -> None:
     )
 
 
-def _caption(canonical, frames, frame_sources, settings):
-    """Step 5: D7 projector probe + per-frame captioning, all-or-nothing caption cache (D10)."""
-    from .vision import PROMPT_VERSION, caption_frames, verify_projector
+def _load_vision_config(args):
+    """Load a VisionConfig from --vision-config's JSON path, or None if unset."""
+    from pathlib import Path
+
+    from .schema import VisionConfig
+
+    path = getattr(args, "vision_config", None)
+    if not path:
+        return None
+    return VisionConfig.model_validate_json(Path(path).read_text(encoding="utf-8"))
+
+
+def _caption_cache_key(canonical, frames, settings, config):
+    """Cache key for _caption; folds in the VisionConfig hash so re-configuring re-captions
+    only (not a full cache bust across unrelated caches)."""
+    from .vision import PROMPT_VERSION
 
     frameset = hashlib.sha1("".join(f.phash for f in frames).encode()).hexdigest()[:10]
-    key = fs_key(
+    # Hash only the four prompt slots -- frame-selection fields (sample_interval/dedup_threshold/
+    # max_frames) already surface as a frameset change when they actually alter the frame set, so
+    # folding them in here too would needlessly re-caption on a non-firing config change.
+    if config:
+        prompt_slots = config.model_dump(
+            include={"focus", "look_for", "ocr_scope", "describe"}
+        )
+        blob = json.dumps(prompt_slots, sort_keys=True, separators=(",", ":"))
+        config_hash = hashlib.sha1(blob.encode()).hexdigest()[:10]
+    else:
+        config_hash = "default"
+    return fs_key(
         canonical.platform, canonical.id, canonical.part,
         stage="captions", model=settings.lmstudio_vision_model,
-        prompt=PROMPT_VERSION, frameset=frameset,
+        prompt=PROMPT_VERSION, frameset=frameset, config=config_hash,
     )
+
+
+def _caption(canonical, frames, frame_sources, settings, config):
+    """Step 5: D7 projector probe + per-frame captioning, all-or-nothing caption cache (D10).
+    Cache key includes the VisionConfig hash, so re-configuring re-captions only."""
+    from .vision import caption_frames, verify_projector
+
+    key = _caption_cache_key(canonical, frames, settings, config)
     cached = load_json(settings.cache_dir, "captions", key)
     if cached is not None:
         print(f"[{canonical.id} p{canonical.part}] captions: cached ({len(cached)})")
@@ -225,7 +294,7 @@ def _caption(canonical, frames, frame_sources, settings):
     verify_projector(settings)  # D7: hard-stop if the mmproj isn't really reading images
     print(f"[{canonical.id} p{canonical.part}] captioning {len(frames)} frames via "
           f"{settings.lmstudio_vision_model}...")
-    captioned = caption_frames(frames, frame_sources, settings)
+    captioned = caption_frames(frames, frame_sources, settings, config)
     save_json(settings.cache_dir, "captions", key, [f.model_dump() for f in captioned])
     return captioned
 

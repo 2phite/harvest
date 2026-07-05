@@ -794,3 +794,40 @@ def test_build_bundle_threads_interactions():
         _canonical(), meta, _transcript(), [], _settings(), interactions=interactions
     )
     assert bundle.interactions == interactions
+
+
+def test_render_markdown_omits_skipped_frames():
+    bundle = _bundle(
+        transcript=Transcript(
+            source="whisper", source_reason="test",
+            segments=[_seg(0, 5, "hello world")],
+        ),
+        frames=[
+            Frame(ts=0.0, phash="a", caption="A real slide.", skipped=False),
+            Frame(ts=30.0, phash="b", caption=None, ocr=None, skipped=True),
+        ],
+    )
+    md = render_markdown(bundle, _settings())
+    assert "A real slide." in md          # non-skipped frame renders
+    assert "[00:30]" not in md            # skipped frame does not open a chunk
+
+
+def test_write_frames_only_writes_pngs_and_index(tmp_path):
+    import json
+    from harvest.config import Settings
+    from harvest.merge import write_frames_only
+    from harvest.providers.base import Canonical
+    from harvest.schema import Frame
+
+    src = tmp_path / "raw_f.png"
+    src.write_bytes(b"\x89PNG")
+    settings = Settings()
+    settings.out_dir = tmp_path / "out"
+    canonical = Canonical(platform="bilibili.com", id="BVx", part=1, url="u")
+    frames = [Frame(ts=6.0, path="frames/000006_000.png", phash="deadbeef")]
+
+    out = write_frames_only(canonical, frames, {"frames/000006_000.png": src}, settings)
+
+    assert (out / "frames" / "000006_000.png").exists()
+    index = json.loads((out / "frames.json").read_text(encoding="utf-8"))
+    assert index == [{"ts": 6.0, "path": "frames/000006_000.png", "phash": "deadbeef"}]

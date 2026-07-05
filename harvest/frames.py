@@ -39,6 +39,19 @@ def dedup_phashes(
     return kept
 
 
+def cap_frames(items: Sequence[tuple[float, str]], max_frames: int) -> list[tuple[float, str]]:
+    """Uniform post-dedup thinning to a hard ceiling — the genre-agnostic cost bound (borrowed from
+    claude-real-video). Continuous-motion video defeats phash dedup (every sample genuinely differs),
+    so without this a long clip captions 100+ frames. Keeps the first frame and spreads the rest
+    evenly across the timeline; returns `items` unchanged when already within the cap."""
+    items = list(items)
+    if len(items) <= max_frames:
+        return items
+    step = len(items) / max_frames
+    keep_idx = {int(i * step) for i in range(max_frames)}
+    return [it for i, it in enumerate(items) if i in keep_idx]
+
+
 def download_video(canonical, settings: Settings) -> Path:
     """Download + cache a <=720p video stream: OCR-legible slides, far cheaper than 4K."""
     key = fs_key(canonical.platform, canonical.id, canonical.part)
@@ -113,7 +126,14 @@ def extract_frames(
     if not settings.ffmpeg_path:
         raise RuntimeError("ffmpeg not found; required for frame extraction (see README)")
 
-    key = fs_key(canonical.platform, canonical.id, canonical.part)
+    # sample_interval is folded in (PROTOCOL.md): a changed interval changes what ffmpeg
+    # produces, so it must re-extract into a distinct raw_dir rather than silently reusing
+    # cached PNGs relabeled at the wrong timestamps/density. dedup_threshold/max_frames are
+    # NOT folded in here — they're applied fresh post-cache below on every call.
+    key = fs_key(
+        canonical.platform, canonical.id, canonical.part,
+        interval=settings.sample_interval_s,
+    )
     raw_dir = settings.cache_dir / "frames" / key
     raw_dir.mkdir(parents=True, exist_ok=True)
 
@@ -125,6 +145,7 @@ def extract_frames(
         candidates.append((ts, ph, path))
 
     kept = dedup_phashes([(ts, ph) for ts, ph, _ in candidates], settings.phash_dedup_threshold)
+    kept = cap_frames(kept, settings.max_frames)
     kept_ts = {ts for ts, _ in kept}
 
     frames: list[Frame] = []
