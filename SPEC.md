@@ -137,11 +137,13 @@ Provenance is what makes that trade honest: Atlas always knows which tier it got
 whisper`**, matching bilibili's *ordering*; the only asymmetry with bilibili is the gate (structural,
 below), not the preference. Resolve the target language as `--lang` if pinned, else `info["language"]`
 if truthy, else **unknown**, then:
-  - **known `L`:** human `subtitles[L]` (exact key) → reuse (`human-sub`, `L`). Else the auto-caption
-    for `L`, preferring key `L-orig` then `L` → candidate `auto-sub`. `info["language"]` is best-effort
-    and often a fuller BCP-47 tag (`en-US`, `zh-Hant`) than the bare/script-tagged caption keys, so a
-    non-exact `L` falls back to its base language subtag's original-audio key (`en-US`→`en-orig`,
-    `zh-CN`→`zh-Hans-orig`); this stays original-audio-safe and never reuses a machine-translated track.
+  - **known `L`:** human `subtitles[L]` (exact key), else a **BCP-47-clean** region/script variant of
+    `L`'s base subtag (`de`↔`de-DE`, `zh-Hant`↔`zh-Hans`; see clean-tag rule below) → reuse
+    (`human-sub`). Else the auto-caption for `L`, preferring key `L-orig` then `L` → candidate
+    `auto-sub`. `info["language"]` is best-effort and often a fuller BCP-47 tag (`en-US`, `zh-Hant`)
+    than the bare/script-tagged caption keys, so a non-exact `L` falls back to its base language
+    subtag's original-audio key (`en-US`→`en-orig`, `zh-CN`→`zh-Hans-orig`); this stays
+    original-audio-safe and never reuses a machine-translated track.
   - **unknown:** if `automatic_captions` has exactly **one** `*-orig` key, that is the original-audio
     ASR → candidate `auto-sub`; otherwise (0 or >1 `-orig` keys) → **Whisper** (we won't guess).
   - a candidate `auto-sub` must clear the **structural net** (below) or it → **Whisper**.
@@ -154,10 +156,18 @@ if truthy, else **unknown**, then:
 - **Acquisition format:** fetch the track's server-side **`srt`** (already de-rolled — one clean cue
   per line) and parse with `parse_srt`; strip leading `>>` speaker markers, keep `[music]` cues. This
   sidesteps yt-dlp's rolling, `<c>`-tagged VTT/json3, which repeats every line (~2× cue inflation).
-- **Exact key match only — no fuzzy/primary-subtag matching.** `subtitles` also carries hash-suffixed
-  *community translation* tracks (e.g. `en-US-njLgzgtehjs` on a Spanish video); a fuzzy `en ≈ en-US-…`
-  match would reuse a translation as the original. The `-orig` suffix is yt-dlp's own original-audio
-  marker and is exactly why the auto lookup prefers it.
+- **Clean-tag matching only — exact key, else a well-formed region/script variant.** Prefer
+  `subtitles[L]`; failing that, reuse a same-base-language human key **only if it is a clean BCP-47
+  tag** — primary language subtag followed solely by valid script (4-alpha, `Hant`) and/or region
+  (2-alpha `US` / 3-digit `419`) subtags (`de-DE`, `zh-Hant`, `es-419`). `subtitles` also carries
+  **hash-suffixed community-translation** tracks (e.g. `en-US-njLgzgtehjs` on a Spanish video) and
+  yt-dlp's per-track disambiguation suffixes (`en-eEY6OEpapPo` when a language has multiple tracks);
+  both end in a segment that is *not* a valid region/script subtag, fail the clean-tag test, and are
+  **never** matched — so a translation is never reused as the original. Unlike the auto path, human
+  `subtitles` has no `-orig` original-audio marker, so this clean-tag rail is the *only* safety net;
+  that is why unrestricted primary-subtag fuzzy matching stays forbidden. (`-orig` is yt-dlp's
+  original-audio marker on the *auto* side and is exactly why the auto lookup can fall back more
+  freely.)
 - **Structural validity net (NOT a linguistic quality gate).** Three language-agnostic checks,
   thresholds in config; any failure → Whisper: (1) **presence** — parses to more than a few cues;
   (2) **duration-coverage** — last cue within `0.70–1.10` of `duration` (truncation guard, shared with
@@ -196,7 +206,7 @@ trimmed fixtures early — they double as documentation of the provider contract
 2. Human vs auto distinct? **Yes, cleanly** — separate `subtitles` / `automatic_captions` dicts; a
    human `en` and auto `en` coexist without overlap. This clean split is what lets §6 tier them
    (`human-sub` before `auto-sub`). (Wrinkle: `subtitles` also holds hash-suffixed community
-   translations → exact-key-match only; see §6.)
+   translations → clean-tag match only, never a suffixed key; see §6.)
 
 **Auto-caption probe — RESOLVED (yt-dlp 2026.06.09, `-QFHIoCo-Ko` + 2 controls):**
 3. Format: auto tracks offer `json3/srv1-3/ttml/srt/vtt`. `vtt`/`json3` are **rolling** (each line
