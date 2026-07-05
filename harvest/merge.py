@@ -6,6 +6,7 @@ bundle.md is the product (D1): a provenance header (D2) + slide/wall-clock chunk
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from bisect import bisect_right
@@ -307,4 +308,25 @@ def write_bundle(
         bundle.model_dump_json(indent=2), encoding="utf-8"
     )
     (out / "bundle.md").write_text(render_markdown(bundle, settings), encoding="utf-8")
+    return out
+
+
+def write_frames_only(
+    canonical: Canonical, frames: list[Frame], frame_sources: dict[str, Path], settings: Settings
+) -> Path:
+    """Peek phase (--frames-only): write extracted frame PNGs + a frames.json index to
+    out/<id>-p<part>/, and STOP. No transcript, no captions. Lets a vision-capable caller inspect the
+    frames and author a --vision-config before the (expensive) captioning phase."""
+    out = settings.out_dir / f"{canonical.id}-p{canonical.part}"
+    frames_dir = out / "frames"
+    if frames_dir.exists():
+        shutil.rmtree(frames_dir)
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    for fr in frames:
+        if fr.path and fr.path in frame_sources:
+            shutil.copy2(frame_sources[fr.path], out / fr.path)
+    index = [{"ts": fr.ts, "path": fr.path, "phash": fr.phash} for fr in frames]
+    (out / "frames.json").write_text(
+        json.dumps(index, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     return out
