@@ -12,30 +12,53 @@ from ..schema import Segment
 from ..subtitles import parse_srt
 
 
+def _lang_base(tag: str) -> str:
+    """Primary language subtag of a BCP-47 tag: `en-US`->`en`, `zh-Hant`/`zh-Hans-CN`->`zh`."""
+    return tag.split("-", 1)[0]
+
+
 def pick_auto_key(automatic_captions: dict, target: str | None) -> str | None:
     """Choose the original-audio auto-caption key, or None (-> Whisper).
 
-    Known target L: prefer `L-orig` (yt-dlp's original-audio marker), then plain `L`. If neither
-    exists, tolerate a REGIONAL tag (yt-dlp's `info["language"]` is often `en-US`/`pt-BR` while the
-    caption keys are the bare subtag `en`/`pt`): retry on the base subtag, staying original-audio-safe
-    — take `{base}-orig` if present, else the bare `{base}` ASR ONLY when the video has no `*-orig`
-    tracks at all (single-audio, so the bare key is the original, not a machine translation). Neither
-    -> None. Unknown target: use the sole `*-orig` key; 0 or >1 is ambiguous -> None (don't guess)."""
-    if target is not None:
-        for key in (f"{target}-orig", target):
-            if key in automatic_captions:
-                return key
-        base = target.split("-")[0]
-        if base != target:
-            if f"{base}-orig" in automatic_captions:
-                return f"{base}-orig"
-            if base in automatic_captions and not any(
-                k.endswith("-orig") for k in automatic_captions
-            ):
-                return base
-        return None
-    origs = [k for k in automatic_captions if k.endswith("-orig")]
-    return origs[0] if len(origs) == 1 else None
+    Known target L: prefer the exact `L-orig` (yt-dlp's original-audio marker), then exact `L`.
+    Failing an exact hit, tolerate REGIONAL and SCRIPT variants — yt-dlp's `info["language"]` is
+    best-effort and often a fuller tag (`en-US`, `zh-Hant`, `pt-BR`) than the caption keys, which
+    may be bare (`en`) or script-tagged (`zh-Hans-orig`). Match on the primary language SUBTAG,
+    staying original-audio-safe:
+      1. any `*-orig` key in the same base language (script/region ignored — `-orig` guarantees
+         it is the original audio, so `zh-Hant` reuses `zh-Hans-orig`; a key also matching the
+         fuller target tag is preferred);
+      2. else, ONLY when the video has no `*-orig` keys at all (single-audio, so a same-language
+         key is the original ASR, not a machine translation), the same-base plain key (bare or
+         shortest first).
+    No same-language match -> None. Unknown target: the sole `*-orig` key; 0 or >1 -> None (don't
+    guess)."""
+    if target is None:
+        origs = [k for k in automatic_captions if k.endswith("-orig")]
+        return origs[0] if len(origs) == 1 else None
+
+    for key in (f"{target}-orig", target):
+        if key in automatic_captions:
+            return key
+
+    base = _lang_base(target)
+
+    # a key also matching the fuller target tag wins, then the shorter (more generic) key.
+    def _rank(k: str) -> tuple[int, int]:
+        return (0 if k.startswith(target) else 1, len(k))
+
+    same_base_orig = sorted(
+        (k for k in automatic_captions if k.endswith("-orig") and _lang_base(k[:-5]) == base),
+        key=_rank,
+    )
+    if same_base_orig:
+        return same_base_orig[0]
+
+    if not any(k.endswith("-orig") for k in automatic_captions):
+        same_base = sorted((k for k in automatic_captions if _lang_base(k) == base), key=_rank)
+        if same_base:
+            return same_base[0]
+    return None
 
 
 def clean_srt_segments(raw: str) -> list[Segment]:

@@ -68,6 +68,38 @@ def test_pick_auto_key_exact_regional_key_still_wins():
     assert pick_auto_key(auto, "en-US") == "en-US-orig"
 
 
+def test_pick_auto_key_chinese_region_target_matches_script_orig():
+    # Regional Mandarin target (zh-CN, not present as an exact key) with the original audio keyed by
+    # SCRIPT (zh-Hans-orig). Same base 'zh' + the -orig marker means it IS the original audio ->
+    # reuse it despite the region/script tag mismatch. The Mandarin analogue of the en-US failure.
+    auto = {"zh-Hans-orig": [{"ext": "srt"}], "zh-Hans": [{"ext": "srt"}],
+            "zh-Hant": [{"ext": "srt"}], "en": [{"ext": "srt"}]}
+    assert pick_auto_key(auto, "zh-CN") == "zh-Hans-orig"
+
+
+def test_pick_auto_key_chinese_prefers_matching_script_orig():
+    # When both scripts have an original-audio track, prefer the one matching the target's script.
+    auto = {"zh-Hans-orig": [{"ext": "srt"}], "zh-Hant-orig": [{"ext": "srt"}]}
+    # zh-TW: base zh, neither -orig startswith it -> shortest/stable pick.
+    assert pick_auto_key(auto, "zh-TW") == "zh-Hans-orig"
+    # zh-Hant: startswith zh-Hant -> the matching-script original wins.
+    assert pick_auto_key(auto, "zh-Hant") == "zh-Hant-orig"
+
+
+def test_pick_auto_key_cantonese_wont_grab_zh_translation():
+    # Cantonese shape: original is yue-orig; zh-Hans/zh-Hant are TRANSLATIONS (no -orig).
+    # A zh-* target must not steal the Cantonese original nor a zh translation -> None.
+    auto = {"yue-orig": [{"ext": "srt"}], "zh-Hans": [{"ext": "srt"}], "zh-Hant": [{"ext": "srt"}]}
+    assert pick_auto_key(auto, "zh-CN") is None
+
+
+def test_pick_auto_key_chinese_single_audio_uses_same_base_asr():
+    # Single-audio Mandarin: no -orig keys, ASR under a script-tagged key. Regional/script target
+    # still reuses the same-language ASR rather than falling to Whisper.
+    auto = {"zh-Hans": [{"ext": "srt"}], "en": [{"ext": "srt"}], "ja": [{"ext": "srt"}]}
+    assert pick_auto_key(auto, "zh-CN") == "zh-Hans"
+
+
 _SRT = (
     "1\n00:00:15,000 --> 00:00:18,760\n>> Yeah, we're good.\n\n"
     "2\n00:00:17,040 --> 00:00:20,440\nOkay, folks.\n\n"
