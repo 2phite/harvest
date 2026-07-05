@@ -15,12 +15,24 @@ from ..subtitles import parse_srt
 def pick_auto_key(automatic_captions: dict, target: str | None) -> str | None:
     """Choose the original-audio auto-caption key, or None (-> Whisper).
 
-    Known target L: prefer `L-orig` (yt-dlp's original-audio marker), then plain `L`. Neither -> None.
-    Unknown target: use the sole `*-orig` key; 0 or >1 such keys is ambiguous -> None (don't guess)."""
+    Known target L: prefer `L-orig` (yt-dlp's original-audio marker), then plain `L`. If neither
+    exists, tolerate a REGIONAL tag (yt-dlp's `info["language"]` is often `en-US`/`pt-BR` while the
+    caption keys are the bare subtag `en`/`pt`): retry on the base subtag, staying original-audio-safe
+    — take `{base}-orig` if present, else the bare `{base}` ASR ONLY when the video has no `*-orig`
+    tracks at all (single-audio, so the bare key is the original, not a machine translation). Neither
+    -> None. Unknown target: use the sole `*-orig` key; 0 or >1 is ambiguous -> None (don't guess)."""
     if target is not None:
         for key in (f"{target}-orig", target):
             if key in automatic_captions:
                 return key
+        base = target.split("-")[0]
+        if base != target:
+            if f"{base}-orig" in automatic_captions:
+                return f"{base}-orig"
+            if base in automatic_captions and not any(
+                k.endswith("-orig") for k in automatic_captions
+            ):
+                return base
         return None
     origs = [k for k in automatic_captions if k.endswith("-orig")]
     return origs[0] if len(origs) == 1 else None

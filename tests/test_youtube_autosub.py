@@ -41,6 +41,33 @@ def test_pick_auto_key_empty_dict_returns_none():
     assert pick_auto_key({}, None) is None
 
 
+def test_pick_auto_key_regional_target_matches_base_orig():
+    # yt-dlp's info["language"] is often a regional BCP-47 tag ("en-US") while the caption keys are
+    # the bare subtag ("en"/"en-orig"). This is the -QFHIoCo-Ko failure: en-US matched nothing.
+    auto = {"en": [{"ext": "srt"}], "en-orig": [{"ext": "srt"}], "es": [{"ext": "srt"}]}
+    assert pick_auto_key(auto, "en-US") == "en-orig"
+
+
+def test_pick_auto_key_regional_target_single_audio_uses_base_asr():
+    # Single-audio video: no *-orig keys at all, so the bare base-subtag key IS the original ASR
+    # (the ~200 other keys are machine translations). A regional target should still reuse it.
+    auto = {"en": [{"ext": "srt"}], "es": [{"ext": "srt"}], "fr": [{"ext": "srt"}]}
+    assert pick_auto_key(auto, "en-US") == "en"
+
+
+def test_pick_auto_key_regional_target_wont_grab_translation():
+    # Original audio is Spanish (es-orig); "en" here is a machine translation. A regional en-US
+    # target must NOT grab that translated track -> None (-> Whisper). Original-audio-safe.
+    auto = {"es-orig": [{"ext": "srt"}], "en": [{"ext": "srt"}], "fr": [{"ext": "srt"}]}
+    assert pick_auto_key(auto, "en-US") is None
+
+
+def test_pick_auto_key_exact_regional_key_still_wins():
+    # If yt-dlp actually keys the track by the regional tag, exact match must still take priority.
+    auto = {"en-US-orig": [{"ext": "srt"}], "en-orig": [{"ext": "srt"}]}
+    assert pick_auto_key(auto, "en-US") == "en-US-orig"
+
+
 _SRT = (
     "1\n00:00:15,000 --> 00:00:18,760\n>> Yeah, we're good.\n\n"
     "2\n00:00:17,040 --> 00:00:20,440\nOkay, folks.\n\n"
