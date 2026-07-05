@@ -590,3 +590,30 @@ def test_caption_cache_key_differs_by_config(tmp_path):
     k_default = _caption_cache_key(canonical, frames, settings, None)
     k_cooking = _caption_cache_key(canonical, frames, settings, VisionConfig(focus="the dish"))
     assert k_default != k_cooking
+
+
+def test_caption_cache_key_ignores_frame_selection_fields(tmp_path):
+    """Final-review Finding 2: config_hash must hash only the four prompt slots. Two configs
+    with identical prompt slots but a different (non-firing) max_frames must produce the SAME
+    caption cache key -- the frameset (phash) component already captures any actual frame-set
+    change, so folding frame-selection fields into config_hash too just causes needless
+    re-captioning."""
+    from harvest.cli import _caption_cache_key
+    from harvest.config import Settings
+    from harvest.providers.base import Canonical
+    from harvest.schema import Frame, VisionConfig
+    settings = Settings()
+    canonical = Canonical(platform="bilibili.com", id="BVx", part=1, url="u")
+    frames = [Frame(ts=0.0, phash="aa"), Frame(ts=6.0, phash="bb")]
+
+    k_a = _caption_cache_key(canonical, frames, settings, VisionConfig(max_frames=50))
+    k_b = _caption_cache_key(canonical, frames, settings, VisionConfig(max_frames=200))
+    assert k_a == k_b
+
+    k_focus_a = _caption_cache_key(canonical, frames, settings, VisionConfig(focus="a"))
+    k_focus_b = _caption_cache_key(canonical, frames, settings, VisionConfig(focus="b"))
+    assert k_focus_a != k_focus_b
+
+    k_default = _caption_cache_key(canonical, frames, settings, None)
+    assert k_default != k_a
+    assert k_default != k_focus_a

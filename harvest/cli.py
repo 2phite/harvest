@@ -262,9 +262,17 @@ def _caption_cache_key(canonical, frames, settings, config):
     from .vision import PROMPT_VERSION
 
     frameset = hashlib.sha1("".join(f.phash for f in frames).encode()).hexdigest()[:10]
-    config_hash = (
-        hashlib.sha1(config.model_dump_json().encode()).hexdigest()[:10] if config else "default"
-    )
+    # Hash only the four prompt slots -- frame-selection fields (sample_interval/dedup_threshold/
+    # max_frames) already surface as a frameset change when they actually alter the frame set, so
+    # folding them in here too would needlessly re-caption on a non-firing config change.
+    if config:
+        prompt_slots = config.model_dump(
+            include={"focus", "look_for", "ocr_scope", "describe"}
+        )
+        blob = json.dumps(prompt_slots, sort_keys=True, separators=(",", ":"))
+        config_hash = hashlib.sha1(blob.encode()).hexdigest()[:10]
+    else:
+        config_hash = "default"
     return fs_key(
         canonical.platform, canonical.id, canonical.part,
         stage="captions", model=settings.lmstudio_vision_model,

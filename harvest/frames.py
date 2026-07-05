@@ -126,7 +126,14 @@ def extract_frames(
     if not settings.ffmpeg_path:
         raise RuntimeError("ffmpeg not found; required for frame extraction (see README)")
 
-    key = fs_key(canonical.platform, canonical.id, canonical.part)
+    # sample_interval is folded in (PROTOCOL.md): a changed interval changes what ffmpeg
+    # produces, so it must re-extract into a distinct raw_dir rather than silently reusing
+    # cached PNGs relabeled at the wrong timestamps/density. dedup_threshold/max_frames are
+    # NOT folded in here — they're applied fresh post-cache below on every call.
+    key = fs_key(
+        canonical.platform, canonical.id, canonical.part,
+        interval=settings.sample_interval_s,
+    )
     raw_dir = settings.cache_dir / "frames" / key
     raw_dir.mkdir(parents=True, exist_ok=True)
 
