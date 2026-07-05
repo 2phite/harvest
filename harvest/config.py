@@ -100,6 +100,18 @@ class QualityThresholds:
 
 
 @dataclass
+class AutoSubNet:
+    """Structural validity net for YouTube auto-captions (SPEC §6). Language-agnostic — no
+    per-language calibration, so unlike QualityThresholds it can't misfire across languages. Any
+    single check failing falls the candidate back to Whisper. Starting guesses; calibrate later."""
+
+    min_cues: int = 5          # a real track has more than a handful of cues
+    coverage_min: float = 0.70  # last cue / duration, lower bound (truncation guard)
+    coverage_max: float = 1.10  # last cue / duration, upper bound
+    cps_min: float = 0.5        # chars/sec over the whole track; ~0 means music/silence, no speech
+
+
+@dataclass
 class Settings:
     # vision / LM Studio
     lmstudio_base_url: str = "http://localhost:1234/v1"
@@ -145,6 +157,9 @@ class Settings:
 
     # quality gate (D5)
     quality: QualityThresholds = field(default_factory=QualityThresholds)
+
+    # YouTube auto-caption structural net (SPEC §6) — separate from the CJK quality gate above
+    youtube_auto: AutoSubNet = field(default_factory=AutoSubNet)
 
     tool_version: str = TOOL_VERSION
 

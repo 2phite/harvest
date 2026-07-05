@@ -126,22 +126,77 @@ def test_fetch_subtitle_pinned_lang_overrides_and_reuses_track():
     assert got.language == "es" and got.segments[0].text == "hola"
 
 
-def test_fetch_subtitle_none_when_known_lang_has_no_exact_track():
-    # 9bZkp7q19f0: language "ko" but subtitles empty -> no exact track -> Whisper (None).
-    p = YouTubeProvider()
-    info = _info("9bZkp7q19f0")
-    got = p.fetch_subtitle(_canonical("9bZkp7q19f0"), Settings(), _meta_for(info),
-                           info=info, fetch_url=lambda url, settings: "")
-    assert got is None
+def _auto_info(language, automatic_captions, *, subtitles=None, duration=300):
+    # Minimal inline info dict for the auto-caption path (fixtures are vtt-only, no -orig/srt).
+    return {
+        "id": "vvvvvvvvvvv",
+        "duration": duration,
+        "language": language,
+        "subtitles": subtitles or {},
+        "automatic_captions": automatic_captions,
+    }
 
 
-def test_fetch_subtitle_never_consults_automatic_captions():
-    # Rick Astley has automatic_captions["en"]; strip subtitles and confirm no fallback.
+_AUTO_SRT = (
+    "1\n00:00:15,000 --> 00:00:20,000\n>> Yeah, we're good, let's get started here.\n\n"
+    "2\n00:01:00,000 --> 00:01:05,000\nOkay, so today we're going to talk about a few things.\n\n"
+    "3\n00:02:00,000 --> 00:02:05,000\nThis part covers the main topic in some real detail today.\n\n"
+    "4\n00:03:00,000 --> 00:03:05,000\nNow let's move onto the next major section of this talk.\n\n"
+    "5\n00:04:58,000 --> 00:04:59,000\nOkay, folks, that is a wrap on the whole thing.\n"
+)
+
+
+def test_fetch_subtitle_uses_auto_caption_when_no_human_track():
+    # language en, no human sub, en-orig auto track present -> auto-sub accepted.
     p = YouTubeProvider()
-    info = dict(_info("dQw4w9WgXcQ"))
-    info["subtitles"] = {}
+    info = _auto_info("en", {"en-orig": [{"ext": "srt", "url": "u"}]})
     got = p.fetch_subtitle(_canonical(), Settings(), _meta_for(info),
-                           info=info, fetch_url=lambda url, settings: "SHOULD NOT BE CALLED")
+                           info=info, fetch_url=lambda url, settings: _AUTO_SRT)
+    assert got is not None and got.accepted is True
+    assert got.source == "auto-sub" and got.language == "en"
+    assert "auto-caption" in got.source_reason and got.quality_gate is None
+
+
+def test_fetch_subtitle_human_track_wins_over_auto():
+    # Both a human en track and an en-orig auto track exist -> human-sub, auto never fetched.
+    p = YouTubeProvider()
+    info = _auto_info("en", {"en-orig": [{"ext": "srt", "url": "u"}]},
+                      subtitles={"en": [{"ext": "vtt", "url": "h"}]})
+
+    def _fetch(url, settings):
+        assert url == "h", "auto track must not be fetched when a human track exists"
+        return "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhi\n"
+
+    got = p.fetch_subtitle(_canonical(), Settings(), _meta_for(info), info=info, fetch_url=_fetch)
+    assert got.accepted and got.source == "human-sub" and got.language == "en"
+
+
+def test_fetch_subtitle_unknown_lang_uses_sole_orig_auto():
+    # language None, sole en-orig auto track -> auto-sub via the -orig detection branch.
+    p = YouTubeProvider()
+    info = _auto_info(None, {"en-orig": [{"ext": "srt", "url": "u"}], "es": [{"ext": "srt", "url": "x"}]})
+    got = p.fetch_subtitle(_canonical(), Settings(), _meta_for(info),
+                           info=info, fetch_url=lambda url, settings: _AUTO_SRT)
+    assert got.accepted and got.source == "auto-sub" and got.language == "en"
+
+
+def test_fetch_subtitle_rejects_auto_failing_the_net():
+    # A single-cue truncated auto track fails presence/coverage -> rejected outcome (-> Whisper).
+    p = YouTubeProvider()
+    info = _auto_info("en", {"en-orig": [{"ext": "srt", "url": "u"}]}, duration=6000)
+    tiny = "1\n00:00:00,000 --> 00:00:02,000\nHello.\n"
+    got = p.fetch_subtitle(_canonical(), Settings(), _meta_for(info),
+                           info=info, fetch_url=lambda url, settings: tiny)
+    assert got is not None and got.accepted is False
+    assert "auto-sub rejected" in got.source_reason
+
+
+def test_fetch_subtitle_none_when_no_human_and_no_auto():
+    # Known lang, but neither a human track nor any auto track -> None (-> Whisper).
+    p = YouTubeProvider()
+    info = _auto_info("ko", {})
+    got = p.fetch_subtitle(_canonical(), Settings(), _meta_for(info),
+                           info=info, fetch_url=lambda url, settings: "")
     assert got is None
 
 

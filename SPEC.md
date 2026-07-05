@@ -116,8 +116,13 @@ different params either.
 ## 6. Transcript logic (per source)
 
 Common invariant: produce an **original-language** transcript; **never silently align the wrong
-text**; bias toward Whisper when in doubt (a subtly-wrong transcript hardens into accepted truth in
-Atlas — the worst failure mode). Provenance is recorded and load-bearing (§8).
+text**; and record provenance, which is load-bearing (§8). On the *structural* axis — is this the
+right track, does it cover the video, is it non-empty — bias toward Whisper when in doubt (a
+truncated/wrong-language track hardens into accepted truth in Atlas — the worst failure mode). On the
+*quality* axis — are the words subtly off — the sources differ: bilibili gates on calibrated CJK
+quality metrics; YouTube deliberately does **not** (unreliable across ~150 languages), instead
+preferring the cheaper auto-caption and leaving the quality call to the consumer's `--force-whisper`.
+Provenance is what makes that trade honest: Atlas always knows which tier it got.
 
 **bilibili** (unchanged from bili-tool):
 - Prefer human sub > AI caption; original zh only. yt-dlp does **not** surface bilibili AI subs, so a
@@ -128,27 +133,48 @@ Atlas — the worst failure mode). Provenance is recorded and load-bearing (§8)
 - **#6357 two-tier assertion:** tier-1 duration sanity (last cue vs part duration, 0.70–1.10); tier-2
   (part > 1) reject if text is near-identical to part 1 (yt-dlp's #6357 signature). Fail → Whisper.
 
-**YouTube** (simpler — yt-dlp is native, no wall, no player-API workaround):
-- **Human captions only** (`info["subtitles"]`), reused **only** on an **exact original-language key
-  match**. Resolve the target language as: `--lang` if the caller pinned it, else `info["language"]`
-  if truthy, else **unknown**. Then:
-  - unknown → **Whisper** (we cannot identify the original track; do **not** trust an arbitrary human
-    track — see probe wrinkle below);
-  - known `L` and `subtitles[L]` exists → reuse it (`human-sub`, language `L`);
-  - otherwise → Whisper.
-- **Auto-captions (`info["automatic_captions"]`) are never consulted** — probe confirmed they're a
-  separate dict (an un-gatable ASR/MT coin-flip of ~150 language variants); ignoring that dict is the
-  whole skip-auto rule.
+**YouTube** (yt-dlp-native — no wall, no player-API workaround). Trust order **`human-sub > auto-sub >
+whisper`**, matching bilibili's *ordering*; the only asymmetry with bilibili is the gate (structural,
+below), not the preference. Resolve the target language as `--lang` if pinned, else `info["language"]`
+if truthy, else **unknown**, then:
+  - **known `L`:** human `subtitles[L]` (exact key) → reuse (`human-sub`, `L`). Else the auto-caption
+    for `L`, preferring key `L-orig` then `L` → candidate `auto-sub`. `info["language"]` is best-effort
+    and often a fuller BCP-47 tag (`en-US`, `zh-Hant`) than the bare/script-tagged caption keys, so a
+    non-exact `L` falls back to its base language subtag's original-audio key (`en-US`→`en-orig`,
+    `zh-CN`→`zh-Hans-orig`); this stays original-audio-safe and never reuses a machine-translated track.
+  - **unknown:** if `automatic_captions` has exactly **one** `*-orig` key, that is the original-audio
+    ASR → candidate `auto-sub`; otherwise (0 or >1 `-orig` keys) → **Whisper** (we won't guess).
+  - a candidate `auto-sub` must clear the **structural net** (below) or it → **Whisper**.
+- **Auto-captions are reused** (`info["automatic_captions"]`, provenance `auto-sub`) — a deliberate
+  reversal of the earlier skip-auto rule, chosen for **cost**: Whisper `large-v3` on a ~90-min lecture
+  is real GPU/time, and modern Google ASR for major languages is punctuated and readable. Auto-captions
+  are authority-ranked *below* Whisper (§8) yet acquisition-*preferred* over it — the same split
+  bilibili already makes for its AI caption. `--force-whisper` is the consumer's override when the
+  auto-caption is judged too low.
+- **Acquisition format:** fetch the track's server-side **`srt`** (already de-rolled — one clean cue
+  per line) and parse with `parse_srt`; strip leading `>>` speaker markers, keep `[music]` cues. This
+  sidesteps yt-dlp's rolling, `<c>`-tagged VTT/json3, which repeats every line (~2× cue inflation).
 - **Exact key match only — no fuzzy/primary-subtag matching.** `subtitles` also carries hash-suffixed
   *community translation* tracks (e.g. `en-US-njLgzgtehjs` on a Spanish video); a fuzzy `en ≈ en-US-…`
-  match would reuse a translation as if it were the original. Exact match avoids this.
-- **No quality gate** — it can't be reliably calibrated across unknown languages, so it would misfire.
-  Whisper is the safety net.
+  match would reuse a translation as the original. The `-orig` suffix is yt-dlp's own original-audio
+  marker and is exactly why the auto lookup prefers it.
+- **Structural validity net (NOT a linguistic quality gate).** Three language-agnostic checks,
+  thresholds in config; any failure → Whisper: (1) **presence** — parses to more than a few cues;
+  (2) **duration-coverage** — last cue within `0.70–1.10` of `duration` (truncation guard, shared with
+  bilibili D4 tier-1); (3) **chars-per-second floor** — catches an "empty-but-full-duration" track
+  (music/silence spanning the timeline with almost no words). These need no per-language calibration,
+  so unlike the CJK `quality.py` gate they cannot misfire across languages — which is why the earlier
+  "no gate on YouTube" argument (it conflated *linguistic quality* with *structural validity*) does not
+  block them. Subtler failure (wrong words, bad audio) is out of the net's scope — the consumer's
+  `--force-whisper` call.
+- **Deliberate limitations:** no language-ID check (the `-orig`-key discipline covers the common
+  mislabel case); and pinning `--lang` to a non-original language may return that language's MT
+  auto-caption — a deliberate user override, not the default original-language behavior.
 - **Field mapping** (from the probe): `uploader_id` ← `info["channel_id"]` (`UC…`, stable — not the
   mutable `@handle` in yt-dlp's `uploader_id`); `published_at` ← `info["timestamp"]` (unix epoch →
   UTC `…Z`), falling back to `upload_date` (`YYYYMMDD` → `T00:00:00Z`); subtitle tracks are
-  `list[{ext,url,name}]` — fetch the **`vtt`** entry and parse WebVTT (`parse_vtt`, alongside the
-  existing `parse_bcc`/`parse_srt`).
+  `list[{ext,url,name}]` — human tracks fetch the **`vtt`** entry (`parse_vtt`); auto tracks fetch the
+  **`srt`** entry (`parse_srt`), alongside the existing `parse_bcc`.
 
 **Language:** default `language=None` (Whisper auto-detects from the opening window). Shared `--lang`
 override lets the caller pin the language (from probe hints); platform-aware default is `zh` for
@@ -165,15 +191,26 @@ trimmed fixtures early — they double as documentation of the provider contract
 **Must-verify empirical probes — RESOLVED (5-video live probe, yt-dlp 2026.06.09):**
 1. Is `info["language"]` reliable? **No — treat as best-effort.** Correct when present (`en`,`ko`),
    but `None` for 2/5, including a Spanish video that *did* carry an `es` track. `language=None` does
-   **not** mean "no captions." → §6's degradation stands: unknown language ⇒ straight to Whisper.
+   **not** mean "no captions." → so unknown-language no longer goes *straight* to Whisper: §6 first
+   tries the sole `*-orig` auto-caption, and only then falls back.
 2. Human vs auto distinct? **Yes, cleanly** — separate `subtitles` / `automatic_captions` dicts; a
-   human `en` and auto `en` coexist without overlap. §6's skip-auto rule is enforceable by ignoring
-   `automatic_captions`. (Wrinkle: `subtitles` also holds hash-suffixed community translations →
-   exact-key-match only; see §6.)
+   human `en` and auto `en` coexist without overlap. This clean split is what lets §6 tier them
+   (`human-sub` before `auto-sub`). (Wrinkle: `subtitles` also holds hash-suffixed community
+   translations → exact-key-match only; see §6.)
 
-Trimmed fixtures seeding the four YouTube branches live in `tests/fixtures/youtube/`
-(`dQw4w9WgXcQ` human-sub, `kJQP7kiw5Fk` language-None→whisper, `9bZkp7q19f0` no-human-sub→whisper,
-`aqz-KE-bpKQ` no-captions baseline).
+**Auto-caption probe — RESOLVED (yt-dlp 2026.06.09, `-QFHIoCo-Ko` + 2 controls):**
+3. Format: auto tracks offer `json3/srv1-3/ttml/srt/vtt`. `vtt`/`json3` are **rolling** (each line
+   re-emitted as it scrolls, `<c>` word-timing tags, ~2× cue inflation); the server-side **`srt`** is
+   **de-rolled** (clean discrete cues, punctuated, only a leading `>>` speaker marker to strip). → §6
+   fetches `srt`.
+4. `-orig` marker: original-audio ASR sits under a single `L-orig` key (`en-orig` on the two
+   English controls; **zero** `-orig` keys on a no-speech video → clean Whisper fallback). The "exactly
+   one `*-orig`" rule for the unknown-language branch held across all probes.
+
+Trimmed fixtures seed the YouTube branches in `tests/fixtures/youtube/` and must cover: `human-sub`
+(human track wins even when an auto track coexists), `auto-sub` accepted (known-lang, no human track),
+`auto-sub` via sole-`-orig` (unknown lang), auto rejected by the structural net → `whisper`, and
+no-captions baseline → `whisper`.
 
 ## 8. Design decisions & rationale (the calls that govern the code)
 
