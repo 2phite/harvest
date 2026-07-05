@@ -118,3 +118,30 @@ def test_download_video_bilibili_keeps_aria2c(tmp_path, monkeypatch):
     _fake_ydl_factory(monkeypatch, info, lambda: target.write_bytes(b"x"))
     F.download_video(canon, s)
     assert _FakeYDL.captured["external_downloader"] == {"default": "C:/aria2c.exe"}
+
+
+# --- Task 3: cap_frames uniform-thinning tests ---
+
+
+from harvest.frames import cap_frames
+
+
+def test_cap_frames_under_limit_returns_all():
+    items = [(float(i), f"{i:016x}") for i in range(5)]
+    assert cap_frames(items, 10) == items
+
+
+def test_cap_frames_over_limit_thins_to_exactly_max():
+    items = [(float(i), f"{i:016x}") for i in range(100)]
+    capped = cap_frames(items, 10)
+    assert len(capped) == 10
+    # order preserved, first kept, spread across the range
+    assert capped[0] == items[0]
+    tss = [ts for ts, _ in capped]
+    assert tss == sorted(tss)
+    assert tss[-1] >= 80  # spread reaches near the end, not just the first 10
+
+
+def test_cap_frames_equal_to_limit_returns_all():
+    items = [(float(i), f"{i:016x}") for i in range(10)]
+    assert cap_frames(items, 10) == items
