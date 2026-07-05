@@ -120,6 +120,7 @@ def build_bundle(
     settings: Settings,
     *,
     vision_model: str | None = None,
+    vision_config=None,
     danmaku: Danmaku | None = None,
     interactions: Interactions | None = None,
 ) -> Bundle:
@@ -138,7 +139,8 @@ def build_bundle(
         meta=Meta(
             cookies_used=bool(settings.sessdata or settings.cookies_browser),
             referer_used=(canonical.platform == "bilibili.com"),
-            vision_model=vision_model, tool_version=settings.tool_version,
+            vision_model=vision_model, vision_config=vision_config,
+            tool_version=settings.tool_version,
         ),
     )
 
