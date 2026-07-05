@@ -144,6 +144,12 @@ def verify_projector(settings: Settings) -> None:
     fpf.write_text(json.dumps({"passed_fingerprint": fp}), encoding="utf-8")
 
 
+def is_skip(text: str) -> bool:
+    """True when the model returned the SKIP verdict (empty frame). Leading-token match so a caption
+    that merely mentions 'skip' in prose is not a false positive."""
+    return text.strip().upper().startswith("SKIP")
+
+
 def _parse(text: str) -> tuple[str | None, str | None]:
     """Split the OCR:/DESCRIPTION: response into (ocr, caption). Falls back to caption-only."""
     up = text
@@ -159,17 +165,22 @@ def _parse(text: str) -> tuple[str | None, str | None]:
 
 
 def caption_frames(
-    frames: list[Frame], frame_paths: dict[str, Path], settings: Settings
+    frames: list[Frame], frame_paths: dict[str, Path], settings: Settings, config=None
 ) -> list[Frame]:
-    """Caption each frame independently (SPEC §5 step 4). Call verify_projector first (D7).
-    Returns new Frame objects with ocr/caption filled."""
+    """Caption each frame independently (SPEC §5 step 4). Call verify_projector first (D7). The prompt
+    is built from `config` (None -> lecture default). A SKIP reply marks the frame skipped (both
+    halves null); otherwise the OCR:/DESCRIPTION: reply is parsed as before."""
     client = _client(settings)
     model = settings.lmstudio_vision_model
+    prompt = build_prompt(config)
     out: list[Frame] = []
     for fr in frames:
         src = frame_paths.get(fr.path or "")
         png = Path(src).read_bytes() if src else b""
-        text = _ask_image(client, model, png, build_prompt(None)) if png else ""
+        text = _ask_image(client, model, png, prompt) if png else ""
+        if text and is_skip(text):
+            out.append(fr.model_copy(update={"ocr": None, "caption": None, "skipped": True}))
+            continue
         ocr, caption = _parse(text)
-        out.append(fr.model_copy(update={"ocr": ocr, "caption": caption}))
+        out.append(fr.model_copy(update={"ocr": ocr, "caption": caption, "skipped": False}))
     return out

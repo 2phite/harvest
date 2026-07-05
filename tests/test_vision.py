@@ -63,3 +63,44 @@ def test_build_prompt_partial_config_falls_back_per_slot():
 def test_prompt_version_bumped():
     from harvest.vision import PROMPT_VERSION
     assert PROMPT_VERSION == "2"
+
+
+def test_is_skip_detects_verdict():
+    from harvest.vision import is_skip
+    assert is_skip("SKIP") is True
+    assert is_skip("  skip \n") is True
+    assert is_skip("OCR:\n大家好\nDESCRIPTION:\nA slide.") is False
+    assert is_skip("This slide is about skipping steps") is False  # not a leading SKIP
+
+
+def test_caption_frames_skip_sets_skipped_flag(tmp_path, monkeypatch):
+    import harvest.vision as vision
+    from harvest.config import Settings
+    from harvest.schema import Frame
+
+    png = tmp_path / "f.png"
+    png.write_bytes(b"\x89PNG fake bytes")
+    monkeypatch.setattr(vision, "_ask_image", lambda *a, **k: "SKIP")
+    monkeypatch.setattr(vision, "_client", lambda *a, **k: None)
+
+    frames = [Frame(ts=1.0, path="frames/f.png", phash="abcd")]
+    out = vision.caption_frames(frames, {"frames/f.png": png}, Settings())
+    assert out[0].skipped is True
+    assert out[0].ocr is None and out[0].caption is None
+
+
+def test_caption_frames_normal_reply_not_skipped(tmp_path, monkeypatch):
+    import harvest.vision as vision
+    from harvest.config import Settings
+    from harvest.schema import Frame
+
+    png = tmp_path / "f.png"
+    png.write_bytes(b"\x89PNG fake bytes")
+    monkeypatch.setattr(vision, "_ask_image", lambda *a, **k: "OCR:\n01 / 69\nDESCRIPTION:\nA dark slide.")
+    monkeypatch.setattr(vision, "_client", lambda *a, **k: None)
+
+    frames = [Frame(ts=1.0, path="frames/f.png", phash="abcd")]
+    out = vision.caption_frames(frames, {"frames/f.png": png}, Settings())
+    assert out[0].skipped is False
+    assert out[0].ocr == "01 / 69"
+    assert out[0].caption == "A dark slide."
