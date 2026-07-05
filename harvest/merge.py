@@ -182,12 +182,16 @@ def render_markdown(bundle: Bundle, settings: Settings) -> str:
     lines.append("## Transcript")
     lines.append("")
 
-    if not t.segments and not bundle.frames:
+    # Skipped frames (vision SKIP verdict) carry no caption: they neither seed a chunk boundary nor
+    # render a slide line. They stay in bundle.json (bundle.frames) for provenance.
+    visible_frames = [f for f in bundle.frames if not f.skipped]
+
+    if not t.segments and not visible_frames:
         lines.append("_(no transcript yet — Whisper pending)_")
         return "\n".join(lines) + "\n"
 
     for ch in chunk(
-        t.segments, bundle.frames, window_s=settings.chunk_window_s, duration_s=bundle.duration_s
+        t.segments, visible_frames, window_s=settings.chunk_window_s, duration_s=bundle.duration_s
     ):
         lines.append(f"### [{_mmss(ch.start)}]")
         for fr in ch.frames:

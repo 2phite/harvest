@@ -794,3 +794,19 @@ def test_build_bundle_threads_interactions():
         _canonical(), meta, _transcript(), [], _settings(), interactions=interactions
     )
     assert bundle.interactions == interactions
+
+
+def test_render_markdown_omits_skipped_frames():
+    bundle = _bundle(
+        transcript=Transcript(
+            source="whisper", source_reason="test",
+            segments=[_seg(0, 5, "hello world")],
+        ),
+        frames=[
+            Frame(ts=0.0, phash="a", caption="A real slide.", skipped=False),
+            Frame(ts=30.0, phash="b", caption=None, ocr=None, skipped=True),
+        ],
+    )
+    md = render_markdown(bundle, _settings())
+    assert "A real slide." in md          # non-skipped frame renders
+    assert "[00:30]" not in md            # skipped frame does not open a chunk
