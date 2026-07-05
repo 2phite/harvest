@@ -138,7 +138,10 @@ whisper`**, matching bilibili's *ordering*; the only asymmetry with bilibili is 
 below), not the preference. Resolve the target language as `--lang` if pinned, else `info["language"]`
 if truthy, else **unknown**, then:
   - **known `L`:** human `subtitles[L]` (exact key) → reuse (`human-sub`, `L`). Else the auto-caption
-    for `L`, preferring key `L-orig` then `L` → candidate `auto-sub`.
+    for `L`, preferring key `L-orig` then `L` → candidate `auto-sub`. `info["language"]` is best-effort
+    and often a fuller BCP-47 tag (`en-US`, `zh-Hant`) than the bare/script-tagged caption keys, so a
+    non-exact `L` falls back to its base language subtag's original-audio key (`en-US`→`en-orig`,
+    `zh-CN`→`zh-Hans-orig`); this stays original-audio-safe and never reuses a machine-translated track.
   - **unknown:** if `automatic_captions` has exactly **one** `*-orig` key, that is the original-audio
     ASR → candidate `auto-sub`; otherwise (0 or >1 `-orig` keys) → **Whisper** (we won't guess).
   - a candidate `auto-sub` must clear the **structural net** (below) or it → **Whisper**.
